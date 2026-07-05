@@ -147,80 +147,115 @@
 </head>
 
 <body>
-  <header>
-    <h1>⛈ Nowcasting Bulgaria — Public</h1>
-    <p>Радар: Румъния (ODIM) + ИАБГ (GCD, STS, BRD) · Мълнии: Blitzortung · NWP: ICON-EU</p>
-    <div id="status">Зареждане...</div>
-  </header>
-
-  <div class="container">
-    <div class="sources">
-      <span class="badge ro">🇷🇴 Romania COMPOSITE</span>
-      <span class="badge iabg">🇧🇬 Голям Чардак</span>
-      <span class="badge iabg">🇧🇬 Старо Село</span>
-      <span class="badge iabg">🇧🇬 Бърдарски геран</span>
-      <span class="badge ltg">⚡ Blitzortung</span>
-      <span class="badge icon">🌤 ICON-EU</span>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <h2>S-PROG Nowcast (0–60 мин)</h2>
-        <img id="nowcast-img" src="maps/nowcast_latest.png" alt="Nowcast" onclick="window.open(this.src)">
-        <div class="meta" id="nowcast-meta">—</div>
-      </div>
-
-      <div class="card">
-        <h2>Blended Forecast — Radar + ICON-EU (0–6h)</h2>
-        <img id="blended-img" src="maps/blended_latest.png" alt="Blended" onclick="window.open(this.src)">
-        <div class="meta" id="blended-meta">—</div>
-      </div>
+  <!-- Password gate -->
+  <div id="login-gate"
+    style="display:flex; justify-content:center; align-items:center; height:100vh; background:#0a0e1a;">
+    <div style="text-align:center;">
+      <h2 style="color:#58a6ff; margin-bottom:1rem;">⛈ Nowcasting Bulgaria</h2>
+      <input id="pwd" type="password" placeholder="Парола"
+        style="padding:0.5rem 1rem; border-radius:6px; border:1px solid #2d3548; background:#161b22; color:#e0e6f0; font-size:1rem;">
+      <button onclick="checkPwd()"
+        style="padding:0.5rem 1rem; margin-left:0.5rem; border-radius:6px; border:none; background:#238636; color:white; cursor:pointer; font-size:1rem;">Вход</button>
+      <p id="pwd-error" style="color:#f85149; margin-top:0.5rem; display:none;">Грешна парола</p>
     </div>
   </div>
+  <div id="main-content" style="display:none;">
+    <header>
+      <h1>⛈ Nowcasting Bulgaria — Public</h1>
+      <p>Радар: Румъния (ODIM) + ИАБГ (GCD, STS, BRD) · Мълнии: Blitzortung · NWP: ICON-EU</p>
+      <div id="status">Зареждане...</div>
+    </header>
 
-  <footer>
-    Данни: <a href="https://www.meteoromania.ro/radar/">ANM Romania</a> ·
-    <a href="https://www.weathermod-bg.eu/">ИАБГ</a> ·
-    <a href="https://www.blitzortung.org/">Blitzortung</a> ·
-    <a href="https://open-meteo.com/">Open-Meteo / DWD ICON-EU</a>
-    <br>Обновява се автоматично чрез GitHub Actions
-  </footer>
+    <div class="container">
+      <div class="sources">
+        <span class="badge ro">🇷🇴 Romania COMPOSITE</span>
+        <span class="badge iabg">🇧🇬 Голям Чардак</span>
+        <span class="badge iabg">🇧🇬 Старо Село</span>
+        <span class="badge iabg">🇧🇬 Бърдарски геран</span>
+        <span class="badge ltg">⚡ Blitzortung</span>
+        <span class="badge icon">🌤 ICON-EU</span>
+      </div>
 
+      <div class="grid">
+        <div class="card">
+          <h2>S-PROG Nowcast (0–60 мин)</h2>
+          <img id="nowcast-img" src="maps/nowcast_latest.png" alt="Nowcast" onclick="window.open(this.src)">
+          <div class="meta" id="nowcast-meta">—</div>
+        </div>
+
+        <div class="card">
+          <h2>Blended Forecast — Radar + ICON-EU (0–6h)</h2>
+          <img id="blended-img" src="maps/blended_latest.png" alt="Blended" onclick="window.open(this.src)">
+          <div class="meta" id="blended-meta">—</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Данни: <a href="https://www.meteoromania.ro/radar/">ANM Romania</a> ·
+      <a href="https://www.weathermod-bg.eu/">ИАБГ</a> ·
+      <a href="https://www.blitzortung.org/">Blitzortung</a> ·
+      <a href="https://open-meteo.com/">Open-Meteo / DWD ICON-EU</a>
+      <br>Обновява се автоматично чрез GitHub Actions
+    </footer>
+
+    <script>
+      async function loadMeta() {
+        try {
+          const resp = await fetch('maps/meta.json?' + Date.now());
+          const meta = await resp.json();
+          const obs = new Date(meta.observation_time);
+          const gen = new Date(meta.generated_utc);
+
+          document.getElementById('status').textContent =
+            `Последно обновяване: ${gen.toUTCString()}`;
+          document.getElementById('status').style.color = '#7ee787';
+
+          document.getElementById('nowcast-meta').textContent =
+            `OBS: ${obs.toISOString().slice(11, 16)} UTC · ` +
+            `Прогноза: ${meta.nowcast_minutes} мин · ` +
+            `Източници: ${meta.sources.join(', ')}`;
+
+          document.getElementById('blended-meta').textContent =
+            `Blending: 0–${meta.blend_hours}h · Radar → ICON-EU`;
+
+          // Cache-bust images
+          const ts = Date.now();
+          document.getElementById('nowcast-img').src =
+            'maps/nowcast_latest.png?' + ts;
+          document.getElementById('blended-img').src =
+            'maps/blended_latest.png?' + ts;
+
+        } catch (e) {
+          document.getElementById('status').textContent = 'Няма данни';
+          document.getElementById('status').style.color = '#f85149';
+        }
+      }
+
+      loadMeta();
+      setInterval(loadMeta, 5 * 60 * 1000);  // refresh на 5 мин
+    </script>
+  </div><!-- край на main-content -->
   <script>
-    async function loadMeta() {
-      try {
-        const resp = await fetch('maps/meta.json?' + Date.now());
-        const meta = await resp.json();
-        const obs = new Date(meta.observation_time);
-        const gen = new Date(meta.generated_utc);
-
-        document.getElementById('status').textContent =
-          `Последно обновяване: ${gen.toUTCString()}`;
-        document.getElementById('status').style.color = '#7ee787';
-
-        document.getElementById('nowcast-meta').textContent =
-          `OBS: ${obs.toISOString().slice(11, 16)} UTC · ` +
-          `Прогноза: ${meta.nowcast_minutes} мин · ` +
-          `Източници: ${meta.sources.join(', ')}`;
-
-        document.getElementById('blended-meta').textContent =
-          `Blending: 0–${meta.blend_hours}h · Radar → ICON-EU`;
-
-        // Cache-bust images
-        const ts = Date.now();
-        document.getElementById('nowcast-img').src =
-          'maps/nowcast_latest.png?' + ts;
-        document.getElementById('blended-img').src =
-          'maps/blended_latest.png?' + ts;
-
-      } catch (e) {
-        document.getElementById('status').textContent = 'Няма данни';
-        document.getElementById('status').style.color = '#f85149';
+    function checkPwd() {
+      var pwd = document.getElementById('pwd').value;
+      // Смени паролата тук:
+      if (pwd === 'nowcast2026') {
+        document.getElementById('login-gate').style.display = 'none';
+        document.getElementById('main-content').style.display = 'block';
+        sessionStorage.setItem('auth', '1');
+      } else {
+        document.getElementById('pwd-error').style.display = 'block';
       }
     }
-
-    loadMeta();
-    setInterval(loadMeta, 5 * 60 * 1000);  // refresh на 5 мин
+    document.getElementById('pwd').addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') checkPwd();
+    });
+    // Запомни за сесията
+    if (sessionStorage.getItem('auth') === '1') {
+      document.getElementById('login-gate').style.display = 'none';
+      document.getElementById('main-content').style.display = 'block';
+    }
   </script>
 </body>
 
