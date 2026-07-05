@@ -1150,3 +1150,89 @@
 09:16:54 [main] INFO: ============================================================
 09:16:54 [main] INFO: ГОТОВО за 61.2 сек
 09:16:54 [main] INFO: ============================================================
+09:52:35 [main] INFO: ============================================================
+09:52:35 [main] INFO: NOWCASTING PUBLIC — START
+09:52:35 [main] INFO: ============================================================
+09:52:35 [main] INFO: ── Фаза 1a: Румъния composite ──
+09:52:35 [ingest.romania] INFO: === Ingest Румъния ===
+09:52:35 [ingest.romania] INFO: Сваляне от https://opendata.meteoromania.ro/radar/COMPOSITE/
+09:52:35 [ingest.romania] INFO:   Сваляне: COMPOSITE_2026070506400000dBZ.hdf
+09:52:36 [ingest.romania] INFO:   Запазен: C:\nowcasting_public\data\radar\romania\COMPOSITE_2026070506400000dBZ.hdf
+09:52:36 [ingest.romania] INFO: Чета: COMPOSITE_2026070505300000dBZ.hdf
+09:52:36 [ingest.romania] INFO:   2026-07-05 05:30:00+00:00  800×850  (40.0-50.0°N, 17.5-33.4°E)  max dBZ=54.3
+09:52:36 [ingest.romania] INFO: Чета: COMPOSITE_2026070505400000dBZ.hdf
+09:52:36 [ingest.romania] INFO:   2026-07-05 05:40:00+00:00  800×850  (40.0-50.0°N, 17.5-33.4°E)  max dBZ=54.3
+09:52:36 [ingest.romania] INFO: Чета: COMPOSITE_2026070505500000dBZ.hdf
+09:52:36 [ingest.romania] INFO:   2026-07-05 05:50:00+00:00  800×850  (40.0-50.0°N, 17.5-33.4°E)  max dBZ=60.9
+09:52:36 [ingest.romania] INFO: Чета: COMPOSITE_2026070506000000dBZ.hdf
+09:52:36 [ingest.romania] INFO:   2026-07-05 06:00:00+00:00  800×850  (40.0-50.0°N, 17.5-33.4°E)  max dBZ=65.4
+09:52:36 [ingest.romania] INFO: Чета: COMPOSITE_2026070506400000dBZ.hdf
+09:52:36 [ingest.romania] INFO:   2026-07-05 06:40:00+00:00  800×850  (40.0-50.0°N, 17.5-33.4°E)  max dBZ=61.9
+09:52:36 [ingest.romania] INFO:   5 frames прочетени
+09:52:36 [main] INFO: ── Фаза 1b: ИАБГ радари ──
+09:52:36 [ingest.iabg] INFO: === Ingest GCD (Голям Чардак) ===
+09:52:37 [ingest.iabg] INFO: [GCD] 15 файла от JSON
+09:52:37 [ingest.iabg] INFO:   dBZ: 108 px, min=5 max=25
+09:52:37 [ingest.iabg] INFO:   dBZ: 73 px, min=5 max=30
+09:52:38 [ingest.iabg] INFO:   dBZ: 127 px, min=5 max=35
+09:52:38 [ingest.iabg] INFO:   dBZ: 144 px, min=5 max=35
+09:52:38 [ingest.iabg] INFO:   dBZ: 3916 px, min=15 max=50
+09:52:38 [ingest.iabg] INFO: [GCD] 5 frames готови
+09:52:38 [ingest.iabg] INFO: === Ingest STS (Старо Село) ===
+09:52:39 [ingest.iabg] INFO: [STS] 15 файла от JSON
+09:52:39 [ingest.iabg] INFO:   dBZ: 222 px, min=5 max=25
+09:52:39 [ingest.iabg] INFO:   dBZ: 189 px, min=5 max=20
+09:52:40 [ingest.iabg] INFO:   dBZ: 209 px, min=5 max=15
+09:52:40 [ingest.iabg] INFO:   dBZ: 259 px, min=5 max=20
+09:52:40 [ingest.iabg] INFO:   dBZ: 284 px, min=5 max=15
+09:52:40 [ingest.iabg] INFO: [STS] 5 frames готови
+09:52:40 [ingest.iabg] INFO: === Ingest BRD (Бърдарски геран) ===
+09:52:41 [ingest.iabg] INFO: [BRD] 15 файла от JSON
+09:52:41 [ingest.iabg] INFO:   dBZ: 776 px, min=5 max=40
+09:52:41 [ingest.iabg] INFO:   dBZ: 804 px, min=5 max=35
+09:52:42 [ingest.iabg] INFO:   dBZ: 8259 px, min=15 max=40
+09:52:42 [ingest.iabg] INFO:   dBZ: 826 px, min=5 max=30
+09:52:42 [ingest.iabg] INFO:   dBZ: 2527 px, min=15 max=50
+09:52:42 [ingest.iabg] INFO: [BRD] 5 frames готови
+09:52:42 [main] INFO:   Общо: 20 frames от 4 източника
+09:52:42 [main] INFO: ── Фаза 3: Composite ──
+09:52:43 [composite] INFO:   romania_composite: 2026-07-05 06:40:00+00:00 Δ=0s
+09:52:43 [composite] INFO:   iabg_STS: 2026-07-05 06:32:04+00:00 Δ=476s
+09:52:43 [composite] INFO: Composite: 2 слоя, 4411 valid px
+09:52:43 [composite] INFO:   romania_composite: 2026-07-05 06:40:00+00:00 Δ=0s
+09:52:43 [composite] INFO:   iabg_STS: 2026-07-05 06:35:52+00:00 Δ=248s
+09:52:43 [composite] INFO: Composite: 2 слоя, 4389 valid px
+09:52:43 [composite] INFO:   romania_composite: 2026-07-05 06:40:00+00:00 Δ=0s
+09:52:43 [composite] INFO:   iabg_STS: 2026-07-05 06:39:41+00:00 Δ=19s
+09:52:43 [composite] INFO: Composite: 2 слоя, 4381 valid px
+09:52:43 [composite] INFO:   romania_composite: 2026-07-05 06:40:00+00:00 Δ=209s
+09:52:43 [composite] INFO:   iabg_STS: 2026-07-05 06:43:29+00:00 Δ=0s
+09:52:43 [composite] INFO: Composite: 2 слоя, 4384 valid px
+09:52:43 [composite] INFO:   romania_composite: 2026-07-05 06:40:00+00:00 Δ=435s
+09:52:43 [composite] INFO:   iabg_STS: 2026-07-05 06:47:15+00:00 Δ=0s
+09:52:43 [composite] INFO: Composite: 2 слоя, 4384 valid px
+09:52:43 [composite] INFO: Серия: 5 composites
+09:52:43 [main] INFO: ── Фаза 4: S-PROG Nowcast ──
+09:52:43 [nowcast] INFO: S-PROG: 15×4min = 60min
+09:52:47 [nowcast] INFO: Optical flow: 0.0 px/step
+09:52:51 [nowcast] INFO: Forecast: max=50.3 dBZ
+09:52:51 [main] INFO: ── Фаза 5: ICON-EU + Blending ──
+09:52:51 [ingest.icon] INFO: ICON-EU grid: 4×9 = 36 точки
+09:52:51 [ingest.icon] INFO:   ICON grid: (48, 4, 9), max = 0.1 mm
+09:52:51 [blend] INFO:   +  5 мин: R:100% I:0% max=50.3 dBZ
+09:52:52 [blend] INFO:   + 65 мин: R:87% I:13% max=50.3 dBZ
+09:52:52 [blend] INFO:   +125 мин: R:0% I:100% max=nan dBZ
+09:52:52 [blend] INFO:   +185 мин: R:0% I:100% max=nan dBZ
+09:52:53 [blend] INFO:   +245 мин: R:0% I:100% max=nan dBZ
+09:52:53 [blend] INFO:   +305 мин: R:0% I:100% max=nan dBZ
+09:52:53 [blend] INFO:   +360 мин: R:0% I:100% max=nan dBZ
+09:52:53 [main] INFO: ── Фаза 6: Карти ──
+09:52:59 [output] INFO: Nowcast карта: C:\nowcasting_public\data\output\maps\nowcast_20260705_0652.png
+09:53:02 [output] INFO: Nowcast карта: C:\nowcasting_public\data\output\maps\nowcast_latest.png
+09:53:05 [output] INFO: Blended карта: C:\nowcasting_public\data\output\maps\blended_20260705_0652.png
+09:53:08 [output] INFO: Blended карта: C:\nowcasting_public\data\output\maps\blended_latest.png
+09:53:08 [output] INFO: Pages meta: C:\nowcasting_public\data\output\maps\meta.json
+09:53:08 [main] INFO: Pages обновени: docs/maps/
+09:53:08 [main] INFO: ============================================================
+09:53:08 [main] INFO: ГОТОВО за 32.9 сек
+09:53:08 [main] INFO: ============================================================

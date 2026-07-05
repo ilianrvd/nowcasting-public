@@ -162,6 +162,15 @@ def main():
     generate_pages_data(forecast["last_composite"], forecast,
                         blended, blend_times)
 
+    # Копирай картите в docs/ за GitHub Pages
+    import shutil
+    pages_maps = os.path.join(BASE_DIR, "docs", "maps")
+    os.makedirs(pages_maps, exist_ok=True)
+    for fname in ["nowcast_latest.png", "blended_latest.png", "meta.json"]:
+        src = os.path.join(MAPS_DIR, fname)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(pages_maps, fname))
+    log.info(f"Pages обновени: docs/maps/")
     elapsed = time.time() - t0
     log.info("=" * 60)
     log.info(f"ГОТОВО за {elapsed:.1f} сек")

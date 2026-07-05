@@ -1,27 +1,41 @@
 <!DOCTYPE html>
 <html lang="bg">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nowcasting Bulgaria — Public</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
       font-family: 'IBM Plex Sans', -apple-system, sans-serif;
       background: #0a0e1a;
       color: #e0e6f0;
     }
+
     header {
       background: linear-gradient(135deg, #1a1f36 0%, #0d1117 100%);
       padding: 1.5rem 2rem;
       border-bottom: 1px solid #2d3548;
     }
+
     header h1 {
       font-size: 1.6rem;
       font-weight: 600;
       color: #58a6ff;
     }
-    header p { color: #8b949e; font-size: 0.9rem; margin-top: 0.3rem; }
+
+    header p {
+      color: #8b949e;
+      font-size: 0.9rem;
+      margin-top: 0.3rem;
+    }
+
     #status {
       display: inline-block;
       background: #1a2332;
@@ -32,44 +46,64 @@
       margin-top: 0.5rem;
       color: #7ee787;
     }
-    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1.5rem;
     }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .card {
       background: #161b22;
       border: 1px solid #2d3548;
       border-radius: 10px;
       overflow: hidden;
     }
+
     .card h2 {
       font-size: 1rem;
       padding: 1rem 1.2rem 0.5rem;
       color: #c9d1d9;
       font-weight: 500;
     }
+
     .card img {
       width: 100%;
       display: block;
       cursor: pointer;
       transition: transform 0.2s;
     }
-    .card img:hover { transform: scale(1.02); }
+
+    .card img:hover {
+      transform: scale(1.02);
+    }
+
     .meta {
       padding: 0.8rem 1.2rem;
       font-size: 0.8rem;
       color: #8b949e;
       border-top: 1px solid #2d3548;
     }
+
     .sources {
       display: flex;
       gap: 0.5rem;
       flex-wrap: wrap;
       padding: 0.5rem 1.2rem 1rem;
     }
+
     .badge {
       background: #1f2937;
       border: 1px solid #374151;
@@ -77,19 +111,41 @@
       padding: 0.2rem 0.6rem;
       font-size: 0.75rem;
     }
-    .badge.ro { border-color: #3b82f6; color: #60a5fa; }
-    .badge.iabg { border-color: #10b981; color: #34d399; }
-    .badge.ltg { border-color: #f59e0b; color: #fbbf24; }
-    .badge.icon { border-color: #8b5cf6; color: #a78bfa; }
+
+    .badge.ro {
+      border-color: #3b82f6;
+      color: #60a5fa;
+    }
+
+    .badge.iabg {
+      border-color: #10b981;
+      color: #34d399;
+    }
+
+    .badge.ltg {
+      border-color: #f59e0b;
+      color: #fbbf24;
+    }
+
+    .badge.icon {
+      border-color: #8b5cf6;
+      color: #a78bfa;
+    }
+
     footer {
       text-align: center;
       padding: 2rem;
       color: #484f58;
       font-size: 0.8rem;
     }
-    footer a { color: #58a6ff; text-decoration: none; }
+
+    footer a {
+      color: #58a6ff;
+      text-decoration: none;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <h1>⛈ Nowcasting Bulgaria — Public</h1>
@@ -110,19 +166,13 @@
     <div class="grid">
       <div class="card">
         <h2>S-PROG Nowcast (0–60 мин)</h2>
-        <img id="nowcast-img"
-             src="data/output/maps/nowcast_latest.png"
-             alt="Nowcast"
-             onclick="window.open(this.src)">
+        <img id="nowcast-img" src="maps/nowcast_latest.png" alt="Nowcast" onclick="window.open(this.src)">
         <div class="meta" id="nowcast-meta">—</div>
       </div>
 
       <div class="card">
         <h2>Blended Forecast — Radar + ICON-EU (0–6h)</h2>
-        <img id="blended-img"
-             src="data/output/maps/blended_latest.png"
-             alt="Blended"
-             onclick="window.open(this.src)">
+        <img id="blended-img" src="maps/blended_latest.png" alt="Blended" onclick="window.open(this.src)">
         <div class="meta" id="blended-meta">—</div>
       </div>
     </div>
@@ -139,7 +189,7 @@
   <script>
     async function loadMeta() {
       try {
-        const resp = await fetch('data/output/maps/meta.json?' + Date.now());
+        const resp = await fetch('maps/meta.json?' + Date.now());
         const meta = await resp.json();
         const obs = new Date(meta.observation_time);
         const gen = new Date(meta.generated_utc);
@@ -149,7 +199,7 @@
         document.getElementById('status').style.color = '#7ee787';
 
         document.getElementById('nowcast-meta').textContent =
-          `OBS: ${obs.toISOString().slice(11,16)} UTC · ` +
+          `OBS: ${obs.toISOString().slice(11, 16)} UTC · ` +
           `Прогноза: ${meta.nowcast_minutes} мин · ` +
           `Източници: ${meta.sources.join(', ')}`;
 
@@ -159,9 +209,9 @@
         // Cache-bust images
         const ts = Date.now();
         document.getElementById('nowcast-img').src =
-          'data/output/maps/nowcast_latest.png?' + ts;
+          'maps/nowcast_latest.png?' + ts;
         document.getElementById('blended-img').src =
-          'data/output/maps/blended_latest.png?' + ts;
+          'maps/blended_latest.png?' + ts;
 
       } catch (e) {
         document.getElementById('status').textContent = 'Няма данни';
@@ -173,4 +223,5 @@
     setInterval(loadMeta, 5 * 60 * 1000);  // refresh на 5 мин
   </script>
 </body>
+
 </html>
