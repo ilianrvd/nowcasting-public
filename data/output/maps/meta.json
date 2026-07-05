@@ -1,0 +1,19 @@
+{
+  "generated_utc": "2026-07-05T06:16:54Z",
+  "observation_time": "2026-07-05T06:05:22Z",
+  "sources": [
+    "romania_composite",
+    "iabg_GCD",
+    "iabg_STS",
+    "iabg_BRD"
+  ],
+  "nowcast_minutes": 60,
+  "blend_hours": 6,
+  "domain": {
+    "lat_min": 41.0,
+    "lat_max": 44.5,
+    "lon_min": 21.0,
+    "lon_max": 29.5,
+    "resolution_km": 1.0
+  }
+}

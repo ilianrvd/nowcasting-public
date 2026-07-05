@@ -1,0 +1,80 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Пълен pipeline",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_nowcast.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Само радари (без мълнии/ICON)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_nowcast.py",
+            "args": ["--no-lightning", "--no-icon"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Само Румъния",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_nowcast.py",
+            "args": ["--no-lightning", "--no-icon", "--iabg", ""],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Тест: Romania ingest",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/ingest/radar_romania.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Тест: ИАБГ ingest",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/ingest/radar_iabg.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Тест: ICON-EU",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/ingest/icon_eu.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Тест: Blitzortung (30s)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/lightning/blitzortung.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Verbose pipeline",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_nowcast.py",
+            "args": ["-v"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

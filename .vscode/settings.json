@@ -1,0 +1,23 @@
+{
+    "python.defaultInterpreterPath": "${env:CONDA_PREFIX}/python.exe",
+    "python.condaPath": "conda",
+    "python.terminal.activateEnvironment": true,
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    "terminal.integrated.env.windows": {
+        "CONDA_DEFAULT_ENV": "nowcast"
+    },
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}"
+    ],
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}"
+    ],
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "data/radar/**": false,
+        "data/output/**": false
+    },
+    "editor.rulers": [100],
+    "editor.formatOnSave": true
+}
