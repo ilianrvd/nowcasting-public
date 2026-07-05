@@ -1,0 +1,8 @@
+__pycache__/ 
+*.pyc 
+data/radar/ 
+data/lightning/ 
+data/icon/ 
+logs/ 
+data/output/maps/nowcast_2*.png 
+data/output/maps/blended_2*.png 
