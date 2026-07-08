@@ -1,8 +1,8 @@
 name: Nowcasting Public
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'    # На всеки 10 мин
+  #schedule:
+   # - cron: '*/10 * * * *'    # На всеки 10 мин
   workflow_dispatch:           # Ръчно стартиране
 
 permissions:
