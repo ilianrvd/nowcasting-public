@@ -107,7 +107,7 @@ def interpolate_icon(target_time: dt.datetime,
     if icon_lat is not None and icon_lon is not None:
         interp = RegularGridInterpolator(
             (icon_lat, icon_lon), p_interp,
-            method="nearest", bounds_error=False, fill_value=0.0)
+            method="linear", bounds_error=False, fill_value=0.0)
         lon2d, lat2d = np.meshgrid(target_lon, target_lat)
         pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
         p_on_grid = interp(pts).reshape(len(target_lat), len(target_lon))

@@ -1,0 +1,9 @@
+Когато видиш конвекция:
+cd C:\nowcasting_public
+conda activate nowcast
+python run_nowcast.py
+git add docs/maps/
+git commit -m "Nowcast update"
+git push
+
+

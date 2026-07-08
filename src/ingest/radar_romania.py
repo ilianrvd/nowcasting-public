@@ -125,25 +125,22 @@ def download_romania_composite() -> str | None:
         return None
 
     links.sort()
-    latest = links[-1]
-    file_url = url.rstrip('/') + '/' + latest
-    local_path = os.path.join(ROMANIA_DIR, os.path.basename(latest))
-
-    if os.path.exists(local_path):
-        logger.info(f"  Вече е свален: {latest}")
-        return local_path
-
-    logger.info(f"  Сваляне: {latest}")
-    try:
-        resp = requests.get(file_url, timeout=60)
-        resp.raise_for_status()
-        with open(local_path, 'wb') as f:
-            f.write(resp.content)
-        logger.info(f"  Запазен: {local_path}")
-        return local_path
-    except Exception as e:
-        logger.error(f"  Грешка при сваляне: {e}")
-        return None
+    # Свали последните 6 файла
+    for fname in links[-6:]:
+        file_url = url.rstrip('/') + '/' + fname
+        local_path = os.path.join(ROMANIA_DIR, os.path.basename(fname))
+        if os.path.exists(local_path):
+            continue
+        logger.info(f"  Сваляне: {fname}")
+        try:
+            resp = requests.get(file_url, timeout=60)
+            resp.raise_for_status()
+            with open(local_path, 'wb') as f:
+                f.write(resp.content)
+            logger.info(f"  Запазен: {local_path}")
+        except Exception as e:
+            logger.error(f"  Грешка: {e}")
+    return ROMANIA_DIR
 
 
 def find_local_composites(n_latest: int = 5) -> list[str]:

@@ -58,6 +58,26 @@ def main():
     log.info("NOWCASTING PUBLIC — START")
     log.info("=" * 60)
 
+    # Изтрий стари входни файлове (>2 часа)
+    import glob
+    from config.settings import ROMANIA_DIR
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    for pattern in [os.path.join(ROMANIA_DIR, "*.hdf")]:
+        for f in glob.glob(pattern):
+            try:
+                import re
+                m = re.search(r'(\d{14})', os.path.basename(f))
+                if m:
+                    ft = dt.datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+                    ft = ft.replace(tzinfo=dt.timezone.utc)
+                    if ft < cutoff:
+                        os.remove(f)
+                        log.info(f"  Изтрит: {os.path.basename(f)}")
+            except Exception:
+                pass
+
+    # ── 1. INGEST РУМЪНИЯ ─────────────────────────────────
+
     # ── 1. INGEST РУМЪНИЯ ─────────────────────────────────
     all_frames = {}
 
