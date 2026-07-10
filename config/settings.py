@@ -119,7 +119,7 @@ BLITZORTUNG = {
 # ICON-EU (за blending, от Open-Meteo)
 # ============================================================
 ICON = {
-    "api_url": "https://historical-forecast-api.open-meteo.com/v1/forecast",
+    "api_url": "https://api.open-meteo.com/v1/forecast",
     "model": "icon_eu",
     "variables": ["precipitation"],
     "forecast_hours": 7,   # 6h + 1 буфер

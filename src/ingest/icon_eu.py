@@ -41,17 +41,15 @@ def fetch_icon_precipitation(ref_time: dt.datetime = None,
         "end_date": tomorrow,
         "timeformat": "unixtime",
     }
-
     url = ICON["api_url"] + "?" + urllib.parse.urlencode(params)
-    logger.info(f"ICON-EU заявка: {today} +{forecast_hours}h")
 
     try:
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "nowcasting-public/1.0")
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode())
     except Exception as e:
-        logger.error(f"ICON-EU грешка: {e}")
+        logger.error(f"ICON-EU grid грешка: {e}")
         return None
 
     hourly = data.get("hourly", {})
@@ -89,88 +87,146 @@ def fetch_icon_precipitation(ref_time: dt.datetime = None,
     }
 
 
-def fetch_icon_grid(ref_time: dt.datetime = None) -> dict | None:
+def fetch_icon_grid(ref_time: dt.datetime = None,
+                    grid_step_deg: float = 0.1,
+                    cache_hours: float = 2.5) -> dict | None:
     """
-    Сваля ICON-EU precipitation за grid от точки над България.
-    Open-Meteo приема двойки lat,lon (не grid), до ~50 точки.
+    Сваля ICON-EU precipitation за ~0.2° grid (~22 km).
+    Rate-limit стратегия за Open-Meteo free tier:
+      - weight на заявка ≈ брой точки → chunks по ~260 точки
+      - 1 chunk / 35 сек (< 600 calls/минута)
+      - кеш 2.5 часа (ICON-EU се обновява на 3-6 ч)
     """
+    import time as time_mod
+    from config.settings import ICON_DIR
+
     if ref_time is None:
         ref_time = dt.datetime.now(dt.timezone.utc)
 
+    # ── 1. КЕШ ───────────────────────────────────────────
+    cache_path = os.path.join(ICON_DIR, "icon_cache.npz")
+    if os.path.exists(cache_path):
+        try:
+            cached = np.load(cache_path, allow_pickle=True)
+            cache_age_h = (ref_time.timestamp() - float(cached["fetched_ts"])) / 3600
+            if cache_age_h < cache_hours:
+                logger.info(f"ICON от кеш (възраст {cache_age_h:.1f} ч)")
+                return {
+                    "precipitation_mm": cached["precip"],
+                    "lat": cached["lat"],
+                    "lon": cached["lon"],
+                    "valid_times": [dt.datetime.fromtimestamp(t, tz=dt.timezone.utc)
+                                    for t in cached["times_unix"]],
+                }
+            logger.info(f"ICON кеш е стар ({cache_age_h:.1f} ч) — ново теглене")
+        except Exception as e:
+            logger.warning(f"ICON кеш грешка: {e}")
+
+    # ── 2. GRID ──────────────────────────────────────────
     today = ref_time.strftime("%Y-%m-%d")
-    tomorrow = (ref_time + dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Sparse grid ~1° стъпка → 4×9 = 36 точки
-    lats = np.arange(DOMAIN["lat_min"], DOMAIN["lat_max"] + 0.1, 1.0)
-    lons = np.arange(DOMAIN["lon_min"], DOMAIN["lon_max"] + 0.1, 1.0)
-
-    # Генерирай двойки (всяка grid точка е отделна "локация")
-    lat_pairs = []
-    lon_pairs = []
-    for la in lats:
-        for lo in lons:
-            lat_pairs.append(f"{la:.2f}")
-            lon_pairs.append(f"{lo:.2f}")
-
-    logger.info(f"ICON-EU grid: {len(lats)}×{len(lons)} = {len(lat_pairs)} точки")
-
-    params = {
-        "latitude": ",".join(lat_pairs),
-        "longitude": ",".join(lon_pairs),
-        "hourly": "precipitation",
-        "models": "icon_eu",
-        "start_date": today,
-        "end_date": tomorrow,
-        "timeformat": "unixtime",
-    }
-
-    url = ICON["api_url"] + "?" + urllib.parse.urlencode(params)
-
-    try:
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "nowcasting-public/1.0")
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode())
-    except Exception as e:
-        logger.error(f"ICON-EU grid грешка: {e}")
-        return None
-
-    # Open-Meteo връща масив от резултати за multi-point
-    if isinstance(data, list):
-        results = data
-    elif isinstance(data, dict) and "hourly" in data:
-        results = [data]
-    else:
-        logger.error("Неочакван формат от ICON API")
-        return None
-
-    # Събери timestamps от първия резултат
-    first_hourly = results[0].get("hourly", {})
-    times_unix = first_hourly.get("time", [])
-    if not times_unix:
-        logger.error("ICON: няма timestamps")
-        return None
-
-    all_times = [dt.datetime.fromtimestamp(t, tz=dt.timezone.utc)
-                 for t in times_unix]
-    nt = len(all_times)
+    lats = np.arange(DOMAIN["lat_min"], DOMAIN["lat_max"] + 0.01, grid_step_deg)
+    lons = np.arange(DOMAIN["lon_min"], DOMAIN["lon_max"] + 0.01, grid_step_deg)
     nlat, nlon = len(lats), len(lons)
 
-    # Сглоби 3D масив (T, nlat, nlon)
-    precip_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
+    # Chunks по longitude: ~260 точки на chunk (< 600/мин при 35 сек паузи)
+    max_pts_per_chunk = 260
+    lon_cols_per_chunk = max(1, max_pts_per_chunk // nlat)
+    lon_chunks = [lons[i:i + lon_cols_per_chunk]
+                  for i in range(0, nlon, lon_cols_per_chunk)]
 
-    for i, result in enumerate(results):
-        hourly = result.get("hourly", {})
-        precip = hourly.get("precipitation", [])
-        lat_idx = i // nlon
-        lon_idx = i % nlon
-        n = min(len(precip), nt)
-        for t in range(n):
-            val = precip[t]
-            precip_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
+    logger.info(f"ICON-EU grid: {nlat}x{nlon} = {nlat*nlon} точки "
+                f"(~{grid_step_deg} deg), {len(lon_chunks)} chunks")
 
-    logger.info(f"  ICON grid: {precip_3d.shape}, "
-                f"max = {precip_3d.max():.1f} mm")
+    all_times = None
+    precip_3d = None
+    nt = 0
+    lon_offset = 0
+    ok_chunks = 0
+
+    for chunk_idx, lon_chunk in enumerate(lon_chunks):
+        if chunk_idx > 0:
+            time_mod.sleep(35)   # < 600 calls/минута
+
+        lat_pairs, lon_pairs = [], []
+        for la in lats:
+            for lo in lon_chunk:
+                lat_pairs.append(f"{la:.3f}")
+                lon_pairs.append(f"{lo:.3f}")
+
+        params = {
+            "latitude": ",".join(lat_pairs),
+            "longitude": ",".join(lon_pairs),
+            "hourly": "precipitation",
+            "models": "icon_eu",
+            "start_date": today,
+            "end_date": today,
+            "timeformat": "unixtime",
+        }
+
+        url = ICON["api_url"] + "?" + urllib.parse.urlencode(params)
+        logger.info(f"  Chunk {chunk_idx+1}/{len(lon_chunks)}: "
+                    f"{len(lat_pairs)} точки, URL={len(url)}")
+
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "nowcasting-public/1.0")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            logger.error(f"  Chunk {chunk_idx+1} грешка: {e}")
+            lon_offset += len(lon_chunk)
+            continue
+
+        results = data if isinstance(data, list) else [data]
+
+        if all_times is None:
+            times_unix = results[0].get("hourly", {}).get("time", [])
+            if not times_unix:
+                lon_offset += len(lon_chunk)
+                continue
+            all_times = [dt.datetime.fromtimestamp(t, tz=dt.timezone.utc)
+                         for t in times_unix]
+            nt = len(all_times)
+            precip_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
+
+        nlon_chunk = len(lon_chunk)
+        for i, result in enumerate(results):
+            precip = result.get("hourly", {}).get("precipitation", [])
+            lat_idx = i // nlon_chunk
+            lon_idx = lon_offset + (i % nlon_chunk)
+            if lat_idx >= nlat or lon_idx >= nlon:
+                continue
+            n = min(len(precip), nt)
+            for t in range(n):
+                val = precip[t]
+                precip_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
+
+        ok_chunks += 1
+        lon_offset += len(lon_chunk)
+
+    if precip_3d is None or ok_chunks == 0:
+        logger.error("ICON: нито един chunk не успя!")
+        return None
+
+    logger.info(f"  ICON grid: {precip_3d.shape}, {ok_chunks}/{len(lon_chunks)} "
+                f"chunks OK, max = {precip_3d.max():.1f} mm")
+
+    # ── 3. ЗАПАЗИ КЕШ ────────────────────────────────────
+    if ok_chunks == len(lon_chunks):
+        try:
+            np.savez_compressed(
+                cache_path,
+                precip=precip_3d,
+                lat=lats, lon=lons,
+                times_unix=np.array([t.timestamp() for t in all_times]),
+                fetched_ts=ref_time.timestamp(),
+            )
+            logger.info(f"  ICON кеш запазен: {cache_path}")
+        except Exception as e:
+            logger.warning(f"  Кеш запис грешка: {e}")
+    else:
+        logger.warning(f"  Непълни данни ({ok_chunks}/{len(lon_chunks)}) — кешът НЕ е запазен")
 
     return {
         "precipitation_mm": precip_3d,
