@@ -1,9 +1,7 @@
 name: Nowcasting Public
 
 on:
-  #schedule:
-   # - cron: '*/10 * * * *'    # На всеки 10 мин
-  workflow_dispatch:           # Ръчно стартиране
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,11 +10,24 @@ permissions:
 jobs:
   nowcast:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache ICON data
+        uses: actions/cache@v4
+        with:
+          path: data/icon/icon_cache.npz
+          key: icon-cache-${{ github.run_id }}
+          restore-keys: |
+            icon-cache-
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgeos-dev libproj-dev libhdf5-dev
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -36,6 +47,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/output/maps/*.png data/output/maps/meta.json
+          git add docs/maps/
+          git add -f data/output/maps/nowcast_latest.png data/output/maps/blended_latest.png data/output/maps/meta.json
           git diff --staged --quiet || git commit -m "Nowcast $(date -u +'%Y-%m-%d %H:%M') UTC"
           git push
