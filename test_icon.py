@@ -13,6 +13,16 @@ lats = data["lat"]
 lons = data["lon"]
 times = data["valid_times"]
 
+showers = data.get("showers_mm")
+if showers is not None:
+    print(f"\nMax showers: {showers.max():.2f} mm")
+    print("Showers часови стъпки:")
+    for t in range(min(24, len(data['valid_times']))):
+        if showers[t].max() > 0:
+            print(f"  {data['valid_times'][t].strftime('%H:%M')}  "
+                  f"max={showers[t].max():.2f} mm  "
+                  f"non-zero={np.count_nonzero(showers[t] > 0)}/{showers[t].size}")
+
 print(f"Shape: {precip.shape}")
 print(f"Lats: {lats}")
 print(f"Lons: {lons}")

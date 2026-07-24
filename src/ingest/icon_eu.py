@@ -113,6 +113,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
                 logger.info(f"ICON от кеш (възраст {cache_age_h:.1f} ч)")
                 return {
                     "precipitation_mm": cached["precip"],
+                    "cape": cached["cape"],
+                    "showers_mm": cached["showers"],
                     "lat": cached["lat"],
                     "lon": cached["lon"],
                     "valid_times": [dt.datetime.fromtimestamp(t, tz=dt.timezone.utc)
@@ -157,7 +159,7 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
         params = {
             "latitude": ",".join(lat_pairs),
             "longitude": ",".join(lon_pairs),
-            "hourly": "precipitation",
+            "hourly": "precipitation,showers,cape",
             "models": "icon_eu",
             "start_date": today,
             "end_date": today,
@@ -189,6 +191,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
                          for t in times_unix]
             nt = len(all_times)
             precip_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
+            cape_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
+            showers_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
 
         nlon_chunk = len(lon_chunk)
         for i, result in enumerate(results):
@@ -201,6 +205,16 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
             for t in range(n):
                 val = precip[t]
                 precip_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
+            cape = result.get("hourly", {}).get("cape", [])
+            n_c = min(len(cape), nt)
+            for t in range(n_c):
+                val = cape[t]
+                cape_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
+            showers = result.get("hourly", {}).get("showers", [])
+            n_s = min(len(showers), nt)
+            for t in range(n_s):
+                val = showers[t]
+                showers_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
 
         ok_chunks += 1
         lon_offset += len(lon_chunk)
@@ -218,6 +232,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
             np.savez_compressed(
                 cache_path,
                 precip=precip_3d,
+                cape=cape_3d,
+                showers=showers_3d,
                 lat=lats, lon=lons,
                 times_unix=np.array([t.timestamp() for t in all_times]),
                 fetched_ts=ref_time.timestamp(),
@@ -230,6 +246,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
 
     return {
         "precipitation_mm": precip_3d,
+        "cape": cape_3d,
+        "showers_mm": showers_3d,
         "lat": lats,
         "lon": lons,
         "valid_times": all_times,

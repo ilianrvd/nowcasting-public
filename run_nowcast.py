@@ -155,9 +155,16 @@ def main():
     if icon_data is not None:
         from src.blend.blending import blend_nowcast_icon
         comp = forecast["last_composite"]
+        # Реален timestep от forecast timestamps
+        fc_times = forecast["timestamps"]
+        if len(fc_times) >= 2:
+            real_ts = round((fc_times[1] - fc_times[0]).total_seconds() / 60)
+        else:
+            real_ts = 5
         blended, blend_times = blend_nowcast_icon(
             forecast["forecast_dbz"], forecast["timestamps"],
-            icon_data, comp["lat"], comp["lon"])
+            icon_data, comp["lat"], comp["lon"],
+            timestep_min=real_ts)
 
     # ── 7. ВИЗУАЛИЗАЦИЯ ──────────────────────────────────
     log.info("── Фаза 6: Карти ──")

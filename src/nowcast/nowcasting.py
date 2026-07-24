@@ -127,19 +127,8 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
     fc_dbz = r_to_dbz(np.clip(R_fc, 0.01, None))
     fc_dbz[R_fc < 0.1] = np.nan
     ref_time = composites[-1]["timestamp"]
-    # Реален timestep за визуализация = средна разлика в ИАБГ серията
-    iabg_comps = [c for c in composites if "iabg" in str(c.get("sources", []))]
-    if len(iabg_comps) >= 2:
-        vis_dt = (iabg_comps[-1]["timestamp"] - iabg_comps[-2]["timestamp"]).total_seconds() / 60
-        vis_dt = max(1, min(round(vis_dt), 10))  # между 1 и 10 мин
-    else:
-        vis_dt = 5
-    fc_times = [ref_time + dt.timedelta(minutes=vis_dt * (i + 1))
+    fc_times = [ref_time + dt.timedelta(minutes=ts * (i + 1))
                 for i in range(n_leadtimes)]
-    logger.info(f"  Визуален timestep: {vis_dt} мин")
-
-    logger.info(f"Forecast: max={np.nanmax(fc_dbz):.1f} dBZ")
-
     return {
         "forecast_dbz": fc_dbz,
         "timestamps": fc_times,
