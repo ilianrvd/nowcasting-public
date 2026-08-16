@@ -1,9 +1,8 @@
 {
-  "generated_utc": "2026-08-16T05:25:21Z",
-  "observation_time": "2026-08-16T05:10:00Z",
+  "generated_utc": "2026-08-16T05:58:25Z",
+  "observation_time": "2026-08-16T05:43:54Z",
   "sources": [
     "romania_composite",
-    "iabg_GCD",
     "iabg_STS"
   ],
   "nowcast_minutes": 60,
