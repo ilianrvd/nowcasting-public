@@ -89,6 +89,22 @@ def blend_weights(minutes: float) -> tuple[float, float]:
 # ────────────────────────────────────────────────────────────
 # ICON интерполация (по време + пространство)
 # ────────────────────────────────────────────────────────────
+def _get_icon_field_raw(icon_data, field, t0_idx, t1_idx, w,
+                         icon_lat, icon_lon, target_lat, target_lon):
+    """Интерполира произволно ICON поле към target grid."""
+    data = icon_data.get(field)
+    if data is None:
+        return np.zeros((len(target_lat), len(target_lon)))
+    p = data[t0_idx] * (1 - w) + data[t1_idx] * w
+    if icon_lat is not None and p.ndim == 2:
+        interp = RegularGridInterpolator(
+            (icon_lat, icon_lon), p,
+            method="linear", bounds_error=False, fill_value=0.0)
+        lon2d, lat2d = np.meshgrid(target_lon, target_lat)
+        pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
+        return interp(pts).reshape(len(target_lat), len(target_lon))
+    return np.full((len(target_lat), len(target_lon)), float(np.mean(p)))
+
 def interpolate_icon(target_time: dt.datetime,
                      icon_data: dict,
                      target_lat: np.ndarray,
@@ -132,11 +148,26 @@ def interpolate_icon(target_time: dt.datetime,
         p_on_grid = np.full((len(target_lat), len(target_lon)),
                             float(np.mean(p_interp)))
 
-    # Конвективен пиков фактор: часовата акумулация подценява
-    # моментния интензитет ~3x за конвективни клетки
-    p_on_grid = p_on_grid * 3.0
-    return precip_to_dbz(p_on_grid)
+    # Конвективен enhancement с LPI и cloud top
+    lpi_field = _get_icon_field_raw(icon_data, "lpi", t0_idx, t1_idx, w,
+                                     icon_lat, icon_lon, target_lat, target_lon)
+    ct_field = _get_icon_field_raw(icon_data, "cloud_top", t0_idx, t1_idx, w,
+                                    icon_lat, icon_lon, target_lat, target_lon)
 
+    # Базов фактор 3x + конвективен бонус при LPI>0 и cloud_top>8km
+    conv_factor = np.where(
+        (lpi_field > 0) & (ct_field > 8000),
+        3.0 + lpi_field * ct_field / 40000,
+        3.0
+    )
+    conv_factor = np.clip(conv_factor, 3.0, 8.0)
+    p_enhanced = p_on_grid * conv_factor
+    
+    # Конвективни ядра: LPI > 0 AND showers > 0.5 mm → min 1.5 mm (≈35 dBZ)
+    conv_core = (lpi_field > 0) & (p_on_grid > 0.5)
+    p_enhanced = np.where(conv_core, np.maximum(p_enhanced, 1.5), p_enhanced)
+    
+    return precip_to_dbz(p_enhanced)
 
 # ────────────────────────────────────────────────────────────
 # Главен blend

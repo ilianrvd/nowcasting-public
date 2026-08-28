@@ -115,6 +115,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
                     "precipitation_mm": cached["precip"],
                     "cape": cached["cape"],
                     "showers_mm": cached["showers"],
+                    "lpi": cached["lpi"],
+                    "cloud_top": cached["cloud_top"],
                     "lat": cached["lat"],
                     "lon": cached["lon"],
                     "valid_times": [dt.datetime.fromtimestamp(t, tz=dt.timezone.utc)
@@ -159,7 +161,7 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
         params = {
             "latitude": ",".join(lat_pairs),
             "longitude": ",".join(lon_pairs),
-            "hourly": "precipitation,showers,cape",
+            "hourly": "precipitation,showers,cape,lightning_potential,convective_cloud_top",
             "models": "icon_eu",
             "start_date": today,
             "end_date": today,
@@ -193,6 +195,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
             precip_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
             cape_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
             showers_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
+            lpi_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
+            cloud_top_3d = np.zeros((nt, nlat, nlon), dtype=np.float32)
 
         nlon_chunk = len(lon_chunk)
         for i, result in enumerate(results):
@@ -215,7 +219,18 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
             for t in range(n_s):
                 val = showers[t]
                 showers_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
+                
+            lpi = result.get("hourly", {}).get("lightning_potential", [])
+            n_l = min(len(lpi), nt)
+            for t in range(n_l):
+                val = lpi[t]
+                lpi_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
 
+            cloud_top = result.get("hourly", {}).get("convective_cloud_top", [])
+            n_ct = min(len(cloud_top), nt)
+            for t in range(n_ct):
+                val = cloud_top[t]
+                cloud_top_3d[t, lat_idx, lon_idx] = val if val is not None else 0.0
         ok_chunks += 1
         lon_offset += len(lon_chunk)
 
@@ -234,6 +249,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
                 precip=precip_3d,
                 cape=cape_3d,
                 showers=showers_3d,
+                lpi=lpi_3d,
+                cloud_top=cloud_top_3d,
                 lat=lats, lon=lons,
                 times_unix=np.array([t.timestamp() for t in all_times]),
                 fetched_ts=ref_time.timestamp(),
@@ -248,6 +265,8 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
         "precipitation_mm": precip_3d,
         "cape": cape_3d,
         "showers_mm": showers_3d,
+        "lpi": lpi_3d,
+        "cloud_top": cloud_top_3d,
         "lat": lats,
         "lon": lons,
         "valid_times": all_times,
