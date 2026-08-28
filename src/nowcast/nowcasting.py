@@ -89,12 +89,17 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
 
     # Изчисли реалния timestep от composite timestamps
     if len(composites) >= 2:
-        real_dt = (composites[-1]["timestamp"] - composites[-2]["timestamp"]).total_seconds() / 60
-        ts = round(real_dt)
-        # Ако timestep е нереален (>30 мин) — ползвай default
-        if ts < 1 or ts > 30:
+        dts = []
+        for i in range(len(composites) - 1):
+            d = (composites[i+1]["timestamp"] - composites[i]["timestamp"]).total_seconds() / 60
+            if 1 <= d <= 30:
+                dts.append(d)
+        if dts:
+            ts = max(1, round(float(np.median(dts))))
+            logger.info(f"  Timestep от {len(dts)} интервала: {dts} → {ts} мин")
+        else:
             ts = NOWCAST["timestep_min"]
-            logger.warning(f"Нереален timestep {real_dt:.1f} мин → default {ts} мин")
+            logger.warning(f"Няма валидни интервали → default {ts} мин")
     else:
         ts = NOWCAST["timestep_min"]
 
