@@ -161,7 +161,7 @@ def main():
             real_ts = round((fc_times[1] - fc_times[0]).total_seconds() / 60)
         else:
             real_ts = 5
-        blended, blend_times = blend_nowcast_icon(
+        blended, blend_times, actual_weights = blend_nowcast_icon(
             forecast["forecast_dbz"], forecast["timestamps"],
             icon_data, comp["lat"], comp["lon"],
             timestep_min=real_ts)
@@ -182,9 +182,11 @@ def main():
 
     if blended is not None:
         bl_path = plot_blended(blended, blend_times, forecast["last_composite"],
-                               os.path.join(MAPS_DIR, f"blended_{ts_str}.png"))
+                               output_path=os.path.join(MAPS_DIR, f"blended_{ts_str}.png"),
+                               actual_weights=actual_weights)
         plot_blended(blended, blend_times, forecast["last_composite"],
-                     os.path.join(MAPS_DIR, "blended_latest.png"))
+                     output_path=os.path.join(MAPS_DIR, "blended_latest.png"),
+                     actual_weights=actual_weights)
 
     generate_pages_data(forecast["last_composite"], forecast,
                         blended, blend_times)

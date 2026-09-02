@@ -90,7 +90,7 @@ def create_composite(all_frames: list[dict],
         return None
 
     composite = np.nanmax(np.stack(layers), axis=0)
-    composite[composite < 10.0] = np.nan
+    composite[composite < 15.0] = np.nan
     valid = np.count_nonzero(~np.isnan(composite))
     logger.info(f"Composite: {len(sources)} слоя, {valid} valid px")
 

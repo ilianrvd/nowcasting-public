@@ -24,23 +24,19 @@ def r_to_dbz(R, a=200.0, b=1.6):
 
 def compute_motion(composites):
     """Optical flow от поредица composites."""
-    if len(composites) < 2:
-        logger.error("Нужни са поне 2 composites!")
+    if len(composites) < 3:
+        logger.error("Нужни са поне 3 composites!")
         return None
 
-    frames = []
-    for c in composites:
-        d = c["dbz"].copy()
-        d[np.isnan(d)] = 0.0
-        frames.append(d)
+    # NaN се ЗАПАЗВАТ — дефинират радарната маска за LK
+    R = dbz_to_r(np.stack([c["dbz"] for c in composites]))
+    R = np.ma.masked_invalid(R)
+    R[R < 0.05] = 0.0
 
-    precip = np.stack(frames)
-    R = dbz_to_r(precip)
-    R[R < 0.1] = 0.0
 
     try:
         from pysteps.motion.lucaskanade import dense_lucaskanade
-        V = dense_lucaskanade(R)
+        V = dense_lucaskanade(R, fd_kwargs={"buffer_mask": 15})
         speed = np.sqrt(V[0]**2 + V[1]**2)
         ms = np.nanmean(speed[speed > 0]) if np.any(speed > 0) else 0
         logger.info(f"Optical flow: {ms:.1f} px/step")

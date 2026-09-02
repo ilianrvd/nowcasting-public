@@ -50,7 +50,15 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     comp = forecast["last_composite"]
     cmap, norm = _setup_cmap()
 
-    steps = [0, 2, 5, 8, 11]  # +5, +15, +30, +45, +60 мин
+        # Показвай панели на +5, +15, +30, +45, +60 мин (реални минути)
+    target_mins = [5, 15, 30, 45, 60]
+    if len(fc_times) >= 2:
+        ts_min = (fc_times[1] - fc_times[0]).total_seconds() / 60
+    else:
+        ts_min = 5
+    steps = [max(0, round(m / ts_min) - 1) for m in target_mins]
+    steps = [s for s in steps if s < fc_dbz.shape[0]]
+    steps = list(dict.fromkeys(steps))  # без дубликати
     steps = [s for s in steps if s < fc_dbz.shape[0]]
     n_panels = 1 + len(steps)
     ncols = min(4, n_panels)
@@ -92,8 +100,8 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
                                 fc_dbz[step])
         pm = ax.pcolormesh(comp["lon"], comp["lat"], fc, cmap=cmap, norm=norm,
                            transform=tr)
-        mins = NOWCAST["timestep_min"] * (step + 1)
-        ax.set_title(f"+{mins} min  {fc_times[step].strftime('%H:%M')} UTC",
+        real_mins = round((fc_times[step] - comp["timestamp"]).total_seconds() / 60)
+        ax.set_title(f"+{real_mins} min  {fc_times[step].strftime('%H:%M')} UTC",
                      fontsize=9)
 
     for j in range(n_panels, len(axes)):
@@ -111,7 +119,7 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     return output_path
 
 
-def plot_blended(blended_dbz, blend_times, comp, output_path=None):
+def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weights=None):
     """Карта: blended прогноза до 6 часа."""
     import matplotlib
     matplotlib.use("Agg")
@@ -154,14 +162,10 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None):
         ax.pcolormesh(comp["lon"], comp["lat"], fc, cmap=cmap, norm=norm, transform=tr)
 
         mins = (step + 1) * ts_min
-        # blend_weights inline (same as blending.py)
-        if mins <= 30: rw, iw = 1.0, 0.0
-        elif mins <= 60: w = (mins-30)/30; rw, iw = 1-w*0.1, w*0.1
-        elif mins <= 90: w = (mins-60)/30; rw, iw = 0.9-w*0.2, 0.1+w*0.2
-        elif mins <= 120: w = (mins-90)/30; rw, iw = 0.7-w*0.2, 0.3+w*0.2
-        elif mins <= 180: w = (mins-120)/60; rw, iw = 0.5-w*0.3, 0.5+w*0.3
-        elif mins <= 360: w = (mins-180)/180; rw, iw = 0.2-w*0.2, 0.8+w*0.2
-        else: rw, iw = 0.0, 1.0
+        if actual_weights is not None and step < len(actual_weights):
+            rw, iw = actual_weights[step]
+        else:
+            rw, iw = 0.0, 1.0
         ax.set_title(f"+{mins} min  {blend_times[step].strftime('%H:%M')}\n"
                      f"R:{rw:.0%} I:{iw:.0%}", fontsize=9)
 

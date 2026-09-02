@@ -213,6 +213,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
 
     blended = np.full((n_total, ny, nx), np.nan, dtype=np.float32)
     blend_times = []
+    actual_weights = []
 
     logger.info(f"Blend: радар {n_radar} кадъра на {radar_step_min:.0f} мин "
                 f"(хоризонт {n_radar*radar_step_min:.0f} мин), "
@@ -250,6 +251,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
 
         # ── Z-space смесване ─────────────────────────────
         z_blend = rw * z_radar + iw * z_icon
+        actual_weights.append((rw, iw))
         blended[step] = z_to_dbz(z_blend)
 
         if step % 12 == 0 or step == n_total - 1:
@@ -257,4 +259,4 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                         f"R:{rw:.0%} I:{iw:.0%} "
                         f"max={np.nanmax(blended[step]) if np.any(~np.isnan(blended[step])) else 0:.1f} dBZ")
 
-    return blended, blend_times
+    return blended, blend_times, actual_weights
