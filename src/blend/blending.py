@@ -63,25 +63,24 @@ def precip_to_dbz(precip_mmh, a=None, b=None):
 # ────────────────────────────────────────────────────────────
 # Тегла
 # ────────────────────────────────────────────────────────────
-def blend_weights(minutes: float) -> tuple[float, float]:
-    """Тегла (radar, icon) като функция на прогн. хоризонт в минути."""
-    if minutes <= 30:
+def blend_weights(minutes: float, radar_horizon: float = 60.0) -> tuple[float, float]:
+    """Тегла (radar, icon) като функция на minutes/radar_horizon.
+
+    frac = minutes / radar_horizon (0=сега, 1=край на реалния радарен хоризонт).
+    Преходът следва относителния хоризонт, не абсолютни минути — така при
+    ts=13 мин (хоризонт 156) и ts=4 мин (хоризонт 60) схемата се държи еднакво.
+    """
+    if radar_horizon <= 0:
+        return 0.0, 1.0
+    frac = minutes / radar_horizon
+    if frac <= 0.5:
         return 1.0, 0.0
-    elif minutes <= 60:
-        w = (minutes - 30) / 30.0
-        return 1.0 - w * 0.1, w * 0.1
-    elif minutes <= 90:
-        w = (minutes - 60) / 30.0
-        return 0.9 - w * 0.2, 0.1 + w * 0.2
-    elif minutes <= 120:
-        w = (minutes - 90) / 30.0
-        return 0.7 - w * 0.2, 0.3 + w * 0.2
-    elif minutes <= 180:
-        w = (minutes - 120) / 60.0
-        return 0.5 - w * 0.3, 0.5 + w * 0.3
-    elif minutes <= 360:
-        w = (minutes - 180) / 180.0
-        return 0.2 - w * 0.2, 0.8 + w * 0.2
+    elif frac <= 1.0:
+        w = (frac - 0.5) / 0.5
+        return 1.0 - w * 0.3, w * 0.3          # 100%→70% радар до края на радара
+    elif frac <= 2.0:
+        w = frac - 1.0
+        return 0.7 * (1.0 - w), 0.3 + 0.7 * w  # 70%→0% радар, ICON поема
     else:
         return 0.0, 1.0
 
@@ -241,7 +240,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         target_time = ref_time + dt.timedelta(minutes=minutes)
         blend_times.append(target_time)
 
-        rw, iw = blend_weights(minutes)
+        rw, iw = blend_weights(minutes, radar_horizon=n_radar * radar_step_min)
 
         # ── Радар: избор ПО ВРЕМЕ ────────────────────────
         z_radar = None
