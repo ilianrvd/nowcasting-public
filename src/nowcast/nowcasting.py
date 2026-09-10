@@ -36,24 +36,15 @@ def compute_motion(composites):
 
     try:
         from pysteps.motion.lucaskanade import dense_lucaskanade
-        V = dense_lucaskanade(R, fd_kwargs={"buffer_mask": 15})
-        speed = np.sqrt(V[0]**2 + V[1]**2)
-        ms = np.nanmean(speed[speed > 0]) if np.any(speed > 0) else 0
-        logger.info(f"Optical flow: {ms:.1f} px/step")
-        return V
-    except ImportError:
-        logger.warning("pySTEPS липсва — OpenCV fallback")
+    except ImportError as e:
+        logger.error(f"pySTEPS не е инсталиран — задължителен е за optical flow: {e}")
+        raise
 
-    try:
-        import cv2
-        f1 = np.clip(frames[-2] / 70 * 255, 0, 255).astype(np.uint8)
-        f2 = np.clip(frames[-1] / 70 * 255, 0, 255).astype(np.uint8)
-        flow = cv2.calcOpticalFlowFarneback(f1, f2, None,
-            0.5, 5, 15, 3, 5, 1.2, 0)
-        return np.stack([flow[..., 1], flow[..., 0]])
-    except ImportError:
-        logger.error("Нито pySTEPS, нито OpenCV!")
-        return None
+    V = dense_lucaskanade(R, fd_kwargs={"buffer_mask": 15})
+    speed = np.sqrt(V[0]**2 + V[1]**2)
+    ms = np.nanmean(speed[speed > 0]) if np.any(speed > 0) else 0
+    logger.info(f"Optical flow: {ms:.1f} px/step")
+    return V
 
 
 def extrapolate(field, V, n_steps):

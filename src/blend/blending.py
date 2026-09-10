@@ -148,26 +148,43 @@ def interpolate_icon(target_time: dt.datetime,
         p_on_grid = np.full((len(target_lat), len(target_lon)),
                             float(np.mean(p_interp)))
 
-    # Конвективен enhancement с LPI и cloud top
+    # Конвективен enhancement (v3 — развързани роли):
+    #   showers    → база (къде и колко вали, чист Z-R)
+    #   LPI        → аддитивен бонус в dBZ (подчертава бурите, структура)
+    #   cloud_top  → дълбочинен бонус (overshooting → град) + мек таван
     lpi_field = _get_icon_field_raw(icon_data, "lpi", t0_idx, t1_idx, w,
                                      icon_lat, icon_lon, target_lat, target_lon)
     ct_field = _get_icon_field_raw(icon_data, "cloud_top", t0_idx, t1_idx, w,
                                     icon_lat, icon_lon, target_lat, target_lon)
 
-    # Базов фактор 3x + конвективен бонус при LPI>0 и cloud_top>8km
-    conv_factor = np.where(
-        (lpi_field > 0) & (ct_field > 8000),
-        3.0 + lpi_field * ct_field / 40000,
-        3.0
+    LPI_REF = 25.0        # LPI за пълен структурен бонус
+    BONUS_MAX = 15.0      # макс dBZ добавка от LPI
+    DEPTH_BONUS = 8.0     # макс dBZ добавка за дълбока конвекция
+    DBZ_HARD_CAP = 65.0
+
+    # База от showers (NaN където няма валеж → няма конвективна област)
+    dbz_base = precip_to_dbz(p_on_grid)
+
+    # LPI бонус (аддитивен в dBZ), само където има база
+    lpi_norm = np.clip(lpi_field / LPI_REF, 0.0, 1.0)
+    dbz_bonus = lpi_norm * BONUS_MAX
+
+    # Дълбочинен бонус: 10km→0, 14km→пълен
+    dbz_depth = np.clip((ct_field - 10000.0) / 4000.0, 0.0, 1.0) * DEPTH_BONUS
+
+    # Мек таван: 6km→50, 14km→65
+    dbz_cap = np.clip(50.0 + (ct_field - 6000.0) / 8000.0 * 15.0, 45.0, 65.0)
+
+    # Комбинация: бонусите само където базата е валидна (има валеж)
+    base_valid = ~np.isnan(dbz_base)
+    dbz_out = dbz_base.copy()
+    dbz_out[base_valid] = np.minimum(
+        dbz_base[base_valid] + dbz_bonus[base_valid] + dbz_depth[base_valid],
+        dbz_cap[base_valid]
     )
-    conv_factor = np.clip(conv_factor, 3.0, 8.0)
-    p_enhanced = p_on_grid * conv_factor
-    
-    # Конвективни ядра: LPI > 0 AND showers > 0.5 mm → min 1.5 mm (≈35 dBZ)
-    conv_core = (lpi_field > 0) & (p_on_grid > 0.5)
-    p_enhanced = np.where(conv_core, np.maximum(p_enhanced, 1.5), p_enhanced)
-    
-    return precip_to_dbz(p_enhanced)
+    dbz_out = np.clip(dbz_out, None, DBZ_HARD_CAP)
+
+    return dbz_out.astype(np.float32)
 
 # ────────────────────────────────────────────────────────────
 # Главен blend
