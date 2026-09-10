@@ -134,7 +134,7 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
     cmap, norm = _setup_cmap()
 
     # Покажи: +30, +60, +120, +180, +240, +360 мин
-    show_minutes = [30, 60, 120, 180, 240, 360]
+    show_minutes = [30, 60, 120, 180, 240, 300]
     ts_min = 5
     show_steps = [m // ts_min - 1 for m in show_minutes]
     show_steps = [s for s in show_steps if s < blended_dbz.shape[0]]
