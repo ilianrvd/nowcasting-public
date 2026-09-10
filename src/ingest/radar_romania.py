@@ -86,6 +86,11 @@ def read_romania_composite(filepath: str) -> dict | None:
     if lat_1d[0] < lat_1d[-1]:
         dbz = dbz[::-1, :]
 
+    # Черно море clutter: по-висок праг (30 dBZ) за румънския радар в морската зона
+    lon2d, lat2d = np.meshgrid(lon_1d, lat_1d)
+    sea_mask = (lat2d >= 42.0) & (lat2d <= 44.0) & (lon2d >= 28.0) & (lon2d <= 30.5)
+    dbz[sea_mask & (dbz < 30.0)] = np.nan
+
     logger.info(f"  {timestamp}  {ysize}×{xsize}  "
                 f"({ll_lat:.1f}-{ur_lat:.1f}°N, {ll_lon:.1f}-{ur_lon:.1f}°E)  "
                 f"max dBZ={np.nanmax(dbz):.1f}")
