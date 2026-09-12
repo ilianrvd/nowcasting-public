@@ -1,7 +1,8 @@
 {
-  "generated_utc": "2026-09-12T10:54:42Z",
-  "observation_time": "2026-09-12T10:39:56Z",
+  "generated_utc": "2026-09-12T12:22:53Z",
+  "observation_time": "2026-09-12T12:07:27Z",
   "sources": [
+    "romania_composite",
     "iabg_GCD",
     "iabg_BRD"
   ],
