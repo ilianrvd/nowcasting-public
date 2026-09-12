@@ -21,6 +21,40 @@ def r_to_dbz(R, a=200.0, b=1.6):
     R = np.clip(R, 0.001, None)
     return 10.0 * np.log10(a * R ** b)
 
+def resample_composites_uniform(composites, target_step_min=5):
+    """
+    Ресемплира composites на равномерна времева ос.
+    За всяка target марка избира най-близкия наличен composite.
+    Така LK и S-PROG получават постоянен timestep.
+    """
+    if len(composites) < 2:
+        return composites
+
+    t0 = composites[0]["timestamp"]
+    t_end = composites[-1]["timestamp"]
+    total_min = (t_end - t0).total_seconds() / 60.0
+    n_steps = max(2, round(total_min / target_step_min))
+
+    resampled = []
+    used = set()
+    for i in range(n_steps + 1):
+        target_t = t0 + dt.timedelta(minutes=i * target_step_min)
+        # Намери най-близкия composite
+        best = min(composites,
+                   key=lambda c: abs((c["timestamp"] - target_t).total_seconds()))
+        best_idx = composites.index(best)
+        if best_idx not in used:
+            resampled.append(best)
+            used.add(best_idx)
+
+    # Сортирай по timestamp (може да има дубликати изключени)
+    resampled.sort(key=lambda c: c["timestamp"])
+    
+    intervals = [(resampled[i+1]["timestamp"] - resampled[i]["timestamp"]
+                  ).total_seconds()/60 for i in range(len(resampled)-1)]
+    logger.info(f"  Ресемплиране: {len(composites)} → {len(resampled)} composites "
+                f"на ~{target_step_min} мин ос, интервали: {[round(x,1) for x in intervals]}")
+    return resampled
 
 def compute_motion(composites):
     """Optical flow от поредица composites."""
@@ -90,17 +124,16 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
     else:
         ts = NOWCAST["timestep_min"]
 
-    # Покрий поне 60 минути
-    if n_leadtimes is None:
-        n_leadtimes = max(NOWCAST["n_leadtimes"], 60 // ts)
-
-    logger.info(f"S-PROG: {n_leadtimes}×{ts}min = {n_leadtimes * ts}min")
- 
-    V = compute_motion(composites)
+    composites_uniform = resample_composites_uniform(composites, target_step_min=5)
+    ts = 5
+    n_leadtimes = max(NOWCAST["n_leadtimes"], 60 // ts)
+    logger.info(f"S-PROG (след ресемплиране): {n_leadtimes}×{ts}min = {n_leadtimes * ts}min")
+    V = compute_motion(composites_uniform)
+    
     if V is None:
         return None
 
-    frames = [np.nan_to_num(c["dbz"], nan=0.0) for c in composites]
+    frames = [np.nan_to_num(c["dbz"], nan=0.0) for c in composites_uniform]
     R = dbz_to_r(np.stack(frames))
     R[R < 0.1] = 0.0
 
