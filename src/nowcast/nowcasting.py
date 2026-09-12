@@ -126,7 +126,7 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
 
     composites_uniform = resample_composites_uniform(composites, target_step_min=5)
     ts = 5
-    n_leadtimes = max(NOWCAST["n_leadtimes"], 60 // ts)
+    n_leadtimes = max(NOWCAST["n_leadtimes"], 150 // ts)
     logger.info(f"S-PROG (след ресемплиране): {n_leadtimes}×{ts}min = {n_leadtimes * ts}min")
     V = compute_motion(composites_uniform)
     

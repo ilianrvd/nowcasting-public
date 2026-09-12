@@ -91,9 +91,15 @@ def create_composite(all_frames: list[dict],
 
     composite = np.nanmax(np.stack(layers), axis=0)
     composite[composite < 15.0] = np.nan
+    # Физически таван: реалният радар не дава над ~70 dBZ.
+    # По-високи стойности са артефакти от източника (напр. румънски 85 dBZ).
+    n_clipped = np.count_nonzero(composite > 70.0)
+    if n_clipped > 0:
+        logger.warning(f"  Clip: {n_clipped} px над 70 dBZ (артефакти) → 70")
+        composite[composite > 70.0] = 70.0
     valid = np.count_nonzero(~np.isnan(composite))
     logger.info(f"Composite: {len(sources)} слоя, {valid} valid px")
-
+    
     return {
         "timestamp": ref_time,
         "dbz": composite,

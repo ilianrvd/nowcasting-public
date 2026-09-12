@@ -147,32 +147,48 @@ def interpolate_icon(target_time: dt.datetime,
         p_on_grid = np.full((len(target_lat), len(target_lon)),
                             float(np.mean(p_interp)))
 
-    # Конвективен enhancement (v3 — развързани роли):
+    # Конвективен enhancement (v4 — CAPE вместо LPI):
     #   showers    → база (къде и колко вали, чист Z-R)
-    #   LPI        → аддитивен бонус в dBZ (подчертава бурите, структура)
+    #   CAPE       → конвективен маркер: peak_factor + аддитивен dBZ бонус
     #   cloud_top  → дълбочинен бонус (overshooting → град) + мек таван
-    lpi_field = _get_icon_field_raw(icon_data, "lpi", t0_idx, t1_idx, w,
+    # LPI не се ползва — ICON-EU през Open-Meteo не връща lightning_potential.
+    cape_field = _get_icon_field_raw(icon_data, "cape", t0_idx, t1_idx, w,
                                      icon_lat, icon_lon, target_lat, target_lon)
     ct_field = _get_icon_field_raw(icon_data, "cloud_top", t0_idx, t1_idx, w,
                                     icon_lat, icon_lon, target_lat, target_lon)
 
-    LPI_REF = 25.0        # LPI за пълен структурен бонус
-    BONUS_MAX = 15.0      # макс dBZ добавка от LPI
+    # cloud_top = -500 е код "няма конвективен облак" → третирай като 0
+    ct_field = np.where(ct_field < 0, 0.0, ct_field)
+
+    CAPE_REF = 2000.0     # CAPE (J/kg) за пълен конвективен ефект
+    BONUS_MAX = 15.0      # макс dBZ добавка от конвекция
     DEPTH_BONUS = 8.0     # макс dBZ добавка за дълбока конвекция
+    PEAK_BOOST = 2.0      # компенсация за часовото усредняване на showers (в конвекция)
     DBZ_HARD_CAP = 65.0
 
-    # База от showers (NaN където няма валеж → няма конвективна област)
-    dbz_base = precip_to_dbz(p_on_grid)
+    # CAPE нормализация (0=без конвекция, 1=развита конвекция)
+    conv_norm = np.clip(cape_field / CAPE_REF, 0.0, 1.0)
 
-    # LPI бонус (аддитивен в dBZ), само където има база
-    lpi_norm = np.clip(lpi_field / LPI_REF, 0.0, 1.0)
-    dbz_bonus = lpi_norm * BONUS_MAX
+    # Пиков фактор: часовата акумулация усреднява конвективния пик.
+    # Компенсираме само където CAPE показва конвекция (1× без CAPE, до ~3× при висок CAPE).
+    peak_factor = 1.0 + conv_norm * PEAK_BOOST
+    p_peak = p_on_grid * peak_factor
+
+    # База от showers с пиков фактор (NaN където няма валеж)
+    dbz_base = precip_to_dbz(p_peak)
+
+    # Конвективен бонус (аддитивен в dBZ), само където има база
+    dbz_bonus = conv_norm * BONUS_MAX
 
     # Дълбочинен бонус: 10km→0, 14km→пълен
     dbz_depth = np.clip((ct_field - 10000.0) / 4000.0, 0.0, 1.0) * DEPTH_BONUS
 
-    # Мек таван: 6km→50, 14km→65
-    dbz_cap = np.clip(50.0 + (ct_field - 6000.0) / 8000.0 * 15.0, 45.0, 65.0)
+    # Мек таван: 6km→50, 14km→65 (само където има конвективен облак)
+    dbz_cap = np.where(
+        ct_field > 0,
+        np.clip(50.0 + (ct_field - 6000.0) / 8000.0 * 15.0, 45.0, 65.0),
+        DBZ_HARD_CAP
+    )
 
     # Комбинация: бонусите само където базата е валидна (има валеж)
     base_valid = ~np.isnan(dbz_base)
@@ -184,7 +200,6 @@ def interpolate_icon(target_time: dt.datetime,
     dbz_out = np.clip(dbz_out, None, DBZ_HARD_CAP)
 
     return dbz_out.astype(np.float32)
-
 # ────────────────────────────────────────────────────────────
 # Главен blend
 # ────────────────────────────────────────────────────────────
