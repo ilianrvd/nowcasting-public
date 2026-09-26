@@ -10,3 +10,6 @@ cartopy>=0.21
 pysteps>=1.7
 websocket-client>=1.5
 opencv-python-headless>=4.7
+xarray
+cfgrib
+eccodes

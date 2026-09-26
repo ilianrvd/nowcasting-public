@@ -18,18 +18,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache ICON data
-        uses: actions/cache@v4
-        with:
-          path: data/icon/icon_cache.npz
-          key: icon-cache-${{ hashFiles('config/settings.py') }}
-          restore-keys: |
-            icon-cache-
-
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libgeos-dev libproj-dev libhdf5-dev
+          sudo apt-get install -y libgeos-dev libproj-dev libhdf5-dev libeccodes-dev
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -40,6 +32,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+
+      - name: Check GRIB support
+        run: |
+          python -c "import cfgrib, eccodes, xarray; print('eccodes', eccodes.codes_get_api_version(), '| cfgrib', cfgrib.__version__, '| xarray', xarray.__version__)"
 
       - name: Run nowcasting
         run: |
