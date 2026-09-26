@@ -129,9 +129,10 @@ def download_romania_composite() -> str | None:
         logger.warning("Няма COMPOSITE файлове на сайта!")
         return None
 
-    links.sort()
-    # Свали последните 6 файла
-    for fname in links[-6:]:
+    # Всяко име се среща два пъти в HTML (href + текст) → уникални
+    links = sorted(set(links))
+    # Свали последните 8 файла (серия от 5 + резерв за изпуснати марки)
+    for fname in links[-8:]:
         file_url = url.rstrip('/') + '/' + fname
         local_path = os.path.join(ROMANIA_DIR, os.path.basename(fname))
         if os.path.exists(local_path):
