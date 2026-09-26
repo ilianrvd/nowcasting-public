@@ -6,14 +6,14 @@ nowcasting_public — Главен pipeline
 2. ИАБГ радари (PNG scraping)
 3. Blitzortung мълнии
 4. ICON-EU precipitation
-5. S-PROG nowcasting (0–60 мин)
+5. S-PROG nowcasting
 6. Blending с ICON (0–6 часа)
 7. PNG карти + GitHub Pages данни
 
 Стартирай:
   python run_nowcast.py
   python run_nowcast.py --no-lightning --no-icon
-  python run_nowcast.py --iabg GCD,STS,BRD
+  python run_nowcast.py --iabg GCD,STS
 """
 
 import os, sys, time, logging, argparse
@@ -40,8 +40,8 @@ def setup_logging(verbose=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Nowcasting Public")
-    parser.add_argument("--iabg", default="GCD,STS,BRD",
-                        help="ИАБГ радари: GCD,STS,BRD")
+    parser.add_argument("--iabg", default="GCD,STS",
+                        help="ИАБГ радари: GCD,STS (BRD е изключен в settings)")
     parser.add_argument("--no-romania", action="store_true")
     parser.add_argument("--no-lightning", action="store_true")
     parser.add_argument("--no-icon", action="store_true")
@@ -77,14 +77,12 @@ def main():
                 pass
 
     # ── 1. INGEST РУМЪНИЯ ─────────────────────────────────
-
-    # ── 1. INGEST РУМЪНИЯ ─────────────────────────────────
     all_frames = {}
 
     if not args.no_romania:
         log.info("── Фаза 1a: Румъния composite ──")
         from src.ingest.radar_romania import ingest_romania
-        ro_frames = ingest_romania(n_frames=args.n_frames)
+        ro_frames = ingest_romania(n_frames=args.n_frames + 2)   # резерв за изпуснати марки
         if ro_frames:
             all_frames["romania"] = ro_frames
 
@@ -94,7 +92,7 @@ def main():
     iabg_ids = [r.strip().upper() for r in args.iabg.split(",")]
     for rid in iabg_ids:
         if rid in IABG_RADARS and IABG_RADARS[rid]["enabled"]:
-            frames = ingest_iabg(rid, n_frames=args.n_frames)
+            frames = ingest_iabg(rid, n_frames=15)   # целият час от JSON (4-мин каденция)
             if frames:
                 all_frames[f"iabg_{rid}"] = frames
 

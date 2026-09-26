@@ -2,16 +2,23 @@
 Nowcast: S-PROG екстраполация
 ==============================
 Optical flow + cascade decomposition + semi-Lagrangian extrapolation.
+
+Входът е хомогенна серия от composite.py на равномерна ос (10 мин).
+Timestep-ът е реалният интервал между кадрите — S-PROG и LK приемат,
+че една стъпка = един интервал на входа.
 """
 
 import os, sys, logging
 import datetime as dt
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from config.settings import NOWCAST, DOMAIN
 
 logger = logging.getLogger("nowcast")
+
+HORIZON_MIN = 150        # радарен хоризонт на прогнозата
 
 
 def dbz_to_r(dbz, a=200.0, b=1.6):
@@ -21,52 +28,20 @@ def r_to_dbz(R, a=200.0, b=1.6):
     R = np.clip(R, 0.001, None)
     return 10.0 * np.log10(a * R ** b)
 
-def resample_composites_uniform(composites, target_step_min=5):
-    """
-    Ресемплира composites на равномерна времева ос.
-    За всяка target марка избира най-близкия наличен composite.
-    Така LK и S-PROG получават постоянен timestep.
-    """
-    if len(composites) < 2:
-        return composites
-
-    t0 = composites[0]["timestamp"]
-    t_end = composites[-1]["timestamp"]
-    total_min = (t_end - t0).total_seconds() / 60.0
-    n_steps = max(2, round(total_min / target_step_min))
-
-    resampled = []
-    used = set()
-    for i in range(n_steps + 1):
-        target_t = t0 + dt.timedelta(minutes=i * target_step_min)
-        # Намери най-близкия composite
-        best = min(composites,
-                   key=lambda c: abs((c["timestamp"] - target_t).total_seconds()))
-        best_idx = composites.index(best)
-        if best_idx not in used:
-            resampled.append(best)
-            used.add(best_idx)
-
-    # Сортирай по timestamp (може да има дубликати изключени)
-    resampled.sort(key=lambda c: c["timestamp"])
-    
-    intervals = [(resampled[i+1]["timestamp"] - resampled[i]["timestamp"]
-                  ).total_seconds()/60 for i in range(len(resampled)-1)]
-    logger.info(f"  Ресемплиране: {len(composites)} → {len(resampled)} composites "
-                f"на ~{target_step_min} мин ос, интервали: {[round(x,1) for x in intervals]}")
-    return resampled
 
 def compute_motion(composites):
-    """Optical flow от поредица composites."""
+    """
+    Optical flow (Lucas-Kanade) от поредица composites.
+    NaN = извън радарното покритие (маска за LK); 0 dBZ = сухо в покритието.
+    Връща V в px за една стъпка на входа.
+    """
     if len(composites) < 3:
         logger.error("Нужни са поне 3 composites!")
         return None
 
-    # NaN се ЗАПАЗВАТ — дефинират радарната маска за LK
     R = dbz_to_r(np.stack([c["dbz"] for c in composites]))
     R = np.ma.masked_invalid(R)
     R[R < 0.05] = 0.0
-
 
     try:
         from pysteps.motion.lucaskanade import dense_lucaskanade
@@ -75,9 +50,6 @@ def compute_motion(composites):
         raise
 
     V = dense_lucaskanade(R, fd_kwargs={"buffer_mask": 15})
-    speed = np.sqrt(V[0]**2 + V[1]**2)
-    ms = np.nanmean(speed[speed > 0]) if np.any(speed > 0) else 0
-    logger.info(f"Optical flow: {ms:.1f} px/step")
     return V
 
 
@@ -108,32 +80,34 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
     if n_cascade_levels is None:
         n_cascade_levels = NOWCAST["n_cascade_levels"]
 
-    # Изчисли реалния timestep от composite timestamps
-    if len(composites) >= 2:
-        dts = []
-        for i in range(len(composites) - 1):
-            d = (composites[i+1]["timestamp"] - composites[i]["timestamp"]).total_seconds() / 60
-            if 1 <= d <= 30:
-                dts.append(d)
-        if dts:
-            ts = max(1, round(float(np.median(dts))))
-            logger.info(f"  Timestep от {len(dts)} интервала: {dts} → {ts} мин")
-        else:
-            ts = NOWCAST["timestep_min"]
-            logger.warning(f"Няма валидни интервали → default {ts} мин")
-    else:
-        ts = NOWCAST["timestep_min"]
+    if len(composites) < 3:
+        logger.error("S-PROG: нужни са поне 3 composites")
+        return None
 
-    composites_uniform = resample_composites_uniform(composites, target_step_min=5)
-    ts = 5
-    n_leadtimes = max(NOWCAST["n_leadtimes"], 150 // ts)
-    logger.info(f"S-PROG (след ресемплиране): {n_leadtimes}×{ts}min = {n_leadtimes * ts}min")
-    V = compute_motion(composites_uniform)
-    
+    # Реален timestep от входа (composite.py гарантира равномерна ос)
+    dts = [(composites[i + 1]["timestamp"] - composites[i]["timestamp"]
+            ).total_seconds() / 60 for i in range(len(composites) - 1)]
+    ts = max(1, round(float(np.median(dts))))
+    if max(abs(d - ts) for d in dts) > 1.0:
+        logger.warning(f"  Неравномерни интервали {[round(d, 1) for d in dts]} "
+                       f"— движението ще е неточно")
+
+    if n_leadtimes is None:
+        n_leadtimes = max(1, HORIZON_MIN // ts)
+
+    logger.info(f"S-PROG: интервали {[round(d, 1) for d in dts]} мин → "
+                f"{n_leadtimes}×{ts} мин = {n_leadtimes * ts} мин")
+
+    V = compute_motion(composites)
     if V is None:
         return None
 
-    frames = [np.nan_to_num(c["dbz"], nan=0.0) for c in composites_uniform]
+    speed = np.sqrt(V[0] ** 2 + V[1] ** 2)
+    ms = float(np.nanmean(speed[speed > 0])) if np.any(speed > 0) else 0.0
+    km_h = ms * DOMAIN["resolution_km"] * 60.0 / ts
+    logger.info(f"Optical flow: {ms:.1f} px/стъпка ≈ {km_h:.0f} km/h")
+
+    frames = [np.nan_to_num(c["dbz"], nan=0.0) for c in composites]
     R = dbz_to_r(np.stack(frames))
     R[R < 0.1] = 0.0
 
@@ -142,8 +116,8 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
         from pysteps.utils.transformation import dB_transform
         R_log, _ = dB_transform(R, threshold=0.1, zerovalue=-15.0)
         R_fc = sprog_fc(R_log[-3:], V, n_leadtimes,
-                n_cascade_levels=n_cascade_levels,
-                precip_thr=-10.0)
+                        n_cascade_levels=n_cascade_levels,
+                        precip_thr=-10.0)
         R_fc, _ = dB_transform(R_fc, inverse=True)
     except (ImportError, Exception) as e:
         logger.warning(f"S-PROG: {e} — semilagrangian fallback")
@@ -194,7 +168,3 @@ def enhance_with_lightning(forecast, ltg_density, ltg_lat, ltg_lon,
 
     forecast["forecast_dbz"] = fc_dbz
     return forecast
-
-
-# Нужен за enhance_with_lightning
-from scipy.interpolate import RegularGridInterpolator
