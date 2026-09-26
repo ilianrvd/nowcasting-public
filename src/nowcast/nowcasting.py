@@ -64,13 +64,37 @@ def extrapolate(field, V, n_steps):
     ny, nx = field.shape
     result = np.zeros((n_steps, ny, nx))
     for step in range(n_steps):
-        y = np.arange(ny)[:, None] - V[0] * (step + 1)
-        x = np.arange(nx)[None, :] - V[1] * (step + 1)
+        y = np.arange(ny)[:, None] - V[1] * (step + 1)
+        x = np.arange(nx)[None, :] - V[0] * (step + 1)
         yi = np.clip(np.round(y).astype(int), 0, ny - 1)
         xi = np.clip(np.round(x).astype(int), 0, nx - 1)
         result[step] = field[yi, xi]
     return result
 
+COMPASS16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+             "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+
+
+def motion_summary(V, last_comp, ts):
+    """
+    Средно движение на ехото в SIGMET стил (посока НАКЪДЕ).
+    pySTEPS: V[0] = x (изток), V[1] = y (по редовете; тук lat нараства → север).
+    Векторна средна само върху пикселите с ехо в последния кадър.
+    """
+    vx, vy = V[0], V[1]
+    speed = np.hypot(vx, vy)
+    echo = np.nan_to_num(last_comp["dbz"], nan=0.0) >= 15.0
+    sel = echo & (speed > 0)
+    if sel.sum() < 50:
+        sel = speed > 0
+    if not sel.any():
+        return {"dir_deg": 0.0, "dir_txt": "STNR", "kmh": 0.0, "kt": 0.0, "n_px": 0}
+    mx, my = float(vx[sel].mean()), float(vy[sel].mean())
+    kmh = float(np.hypot(mx, my)) * DOMAIN["resolution_km"] * 60.0 / ts
+    deg = (np.degrees(np.arctan2(mx, my)) + 360.0) % 360.0
+    txt = COMPASS16[int((deg + 11.25) // 22.5) % 16] if kmh >= 5 else "STNR"
+    return {"dir_deg": deg, "dir_txt": txt, "kmh": kmh,
+            "kt": kmh / 1.852, "n_px": int(sel.sum())}
 
 def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
     """
@@ -102,10 +126,11 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
     if V is None:
         return None
 
-    speed = np.sqrt(V[0] ** 2 + V[1] ** 2)
-    ms = float(np.nanmean(speed[speed > 0])) if np.any(speed > 0) else 0.0
-    km_h = ms * DOMAIN["resolution_km"] * 60.0 / ts
-    logger.info(f"Optical flow: {ms:.1f} px/стъпка ≈ {km_h:.0f} km/h")
+    motion = motion_summary(V, composites[-1], ts)
+    composites[-1]["motion_info"] = motion
+    logger.info(f"Optical flow: MOV {motion['dir_txt']} {motion['kt']:.0f}KT "
+                f"({motion['kmh']:.0f} km/h), към {motion['dir_deg']:.0f}°, "
+                f"по {motion['n_px']} px с ехо")
 
     frames = [np.nan_to_num(c["dbz"], nan=0.0) for c in composites]
     R = dbz_to_r(np.stack(frames))

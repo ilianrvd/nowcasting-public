@@ -32,6 +32,15 @@ def _setup_cmap():
     cmap.set_bad(alpha=0.0)
     return cmap, norm
 
+def _mov_text(comp):
+    """Текст за движението в заглавието на картата (SIGMET стил)."""
+    mi = comp.get("motion_info")
+    if not mi:
+        return ""
+    if mi["dir_txt"] == "STNR":
+        return "   |   STNR"
+    return f"   |   MOV {mi['dir_txt']} {mi['kt']:.0f}KT ({mi['kmh']:.0f} km/h)"
+
 
 def plot_nowcast(forecast, output_path=None, lightning=None):
     """Карта: наблюдение + S-PROG прогнози (до 60 мин)."""
@@ -109,7 +118,8 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
 
     plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
                  ax=axes[:n_panels], label='dBZ', shrink=0.6, pad=0.02)
-    plt.suptitle('NOWCASTING PUBLIC — S-PROG', fontsize=13, fontweight='bold')
+    plt.suptitle(f'NOWCASTING PUBLIC — S-PROG{_mov_text(comp)}',
+                 fontsize=13, fontweight='bold')
 
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "nowcast.png")
@@ -174,7 +184,7 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
 
     plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
                  ax=axes[:len(show_steps)], label='dBZ', shrink=0.6, pad=0.02)
-    plt.suptitle('BLENDED FORECAST — Radar + ICON-EU (0–6h)',
+    plt.suptitle(f'BLENDED FORECAST — Radar + ICON-EU (0–6h){_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
     if output_path is None:
