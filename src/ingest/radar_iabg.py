@@ -9,6 +9,7 @@ Ingest: ИАБГ радари (PNG от weathermod-bg.eu)
 import os, sys, json, logging, re
 import datetime as dt
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import requests
@@ -51,46 +52,33 @@ def fetch_file_list(radar_id: str) -> list[dict]:
         # Извлечи filename от URL
         fname = img_url.split("/")[-1]
 
-        # Парсни timestamp от timp "04.07.2026  07:54" или от filename
+        # Само CAPPI сканове с име {RID}YYMMDDHHMMSS.CAP*.png (със секунди).
+        # Непознати файлове се пропускат — без timp fallback, той даваше
+        # аномалните кадри с кръгъл час (min=15, 2-3x повече px).
         ts = _parse_timestamp(radar_id, fname)
-        if ts is None and timp:
-            ts = _parse_timp(timp)
-
-        if ts:
-            files.append({"filename": fname, "url": img_url, "timestamp": ts})
+        if ts is None or ".CAP" not in fname.upper():
+            logger.warning(f"[{radar_id}] Пропуснат непознат файл: {fname} (timp={timp})")
+            continue
+        files.append({"filename": fname, "url": img_url, "timestamp": ts})
 
     files.sort(key=lambda x: x["timestamp"])
     logger.info(f"[{radar_id}] {len(files)} файла от JSON")
     return files
 
 
-
-
-
 def _parse_timestamp(radar_id: str, filename: str) -> dt.datetime | None:
-    """GCD260704193827.CAPVXE1.png → 2026-07-04 19:38:27 LOCAL → 16:38:27 UTC"""
+    """GCD260704193827.CAPVXE1.png → 2026-07-04 19:38:27 местно → UTC"""
     m = re.search(rf'{radar_id}(\d{{12}})', filename, re.IGNORECASE)
     if not m:
         return None
     try:
         ts = dt.datetime.strptime(m.group(1), "%y%m%d%H%M%S")
-        # ИАБГ дава локално време (EEST = UTC+3 лятно)
-        local_tz = dt.timezone(dt.timedelta(hours=3))
-        ts = ts.replace(tzinfo=local_tz)
+        # ИАБГ дава местно време — Europe/Sofia сменя сам EEST/EET
+        ts = ts.replace(tzinfo=ZoneInfo("Europe/Sofia"))
         return ts.astimezone(dt.timezone.utc)
     except ValueError:
         return None
 
-
-def _parse_timp(timp: str) -> dt.datetime | None:
-    """'04.07.2026  19:38' LOCAL → UTC"""
-    try:
-        ts = dt.datetime.strptime(timp.strip(), "%d.%m.%Y %H:%M")
-        local_tz = dt.timezone(dt.timedelta(hours=3))
-        ts = ts.replace(tzinfo=local_tz)
-        return ts.astimezone(dt.timezone.utc)
-    except ValueError:
-        return None
 
 # ============================================================
 # Сваляне на PNG
@@ -149,12 +137,10 @@ def georeference_cappi(dbz_raw: np.ndarray, radar_id: str) -> tuple:
     radar = IABG_RADARS[radar_id]
     h, w = dbz_raw.shape
 
-    # Crop легенда (ако >80% от дясната лента е NaN)
-    strip = dbz_raw[:, -int(w * 0.12):]
-    if np.sum(np.isnan(strip)) / strip.size > 0.5:
-        w_new = int(w * 0.88)
-        dbz_raw = dbz_raw[:, :w_new]
-        h, w = dbz_raw.shape
+    # PNG е квадратна чиста карта (720x720) без легенда, радарът в центъра.
+    # Без изрязване — старото условие режеше почти винаги и местеше картата на изток.
+    if h != w:
+        logger.warning(f"[{radar_id}] PNG не е квадратен: {w}x{h}")
 
     r = radar["range_km"]
     dlat = r / 111.0
@@ -185,6 +171,7 @@ def ingest_iabg(radar_id: str, n_frames: int = 5) -> list[dict]:
                              full_url=finfo.get("url"))
         if img is None:
             continue
+        logger.info(f"  {finfo['filename']}  {finfo['timestamp'].strftime('%H:%M:%S')} UTC")
         dbz = rgb_to_dbz(img)
         dbz, lat, lon = georeference_cappi(dbz, radar_id)
         frames.append({
