@@ -1,24 +1,18 @@
 """
 Blending: Radar nowcast + ICON-EU
 ==================================
-АРХИТЕКТУРА (v2 — развързани времеви оси):
-
 Blend мрежата е ФИКСИРАНА: 72 стъпки × 5 мин = 360 мин (6 часа).
-Тя не зависи от радарния timestep.
 
 За всяка целева минута T:
-  - Радар: избира се S-PROG кадърът чийто timestamp е най-близо
-    до T (по време, не по индекс). Ако няма кадър в рамките на
-    толеранса → радарен принос 0.
-  - ICON: времева интерполация между часовите стъпки (по време).
-  - Смесване в Z-space: Z = rw*Z_radar + iw*Z_icon (физически
-    коректно, dBZ е логаритмична скала).
+  - Радар: S-PROG кадърът, най-близък по време до T (в толеранс).
+  - ICON: часовият прозорец (h-1, h], който съдържа T — без интерполация
+    между часовете, за да се пази силата на ядрата.
+  - Смесване в Z-space: Z = rw*Z_radar + iw*Z_icon.
 
-Така радарният timestep (5, 10, 14 мин — какъвто е реално) и
-blend оста са напълно независими. Етикетите +30/+60/... мин на
-картите винаги отговарят на реални минути.
-
-ICON ползва "showers" (конвективен валеж).
+ICON → dBZ (v5):
+  showers (конвективен валеж за часа) → фон, чист Z-R
+  LPI → ядра, само върху фон ≥ core_min_showers; dBZ = max(фон, ядро)
+  LPI → dBZ по опорни точки от settings.ICON_DWD
 """
 
 import os, sys, logging
@@ -27,9 +21,11 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import BLEND, ICON
+from config.settings import BLEND, ICON, ICON_DWD
 
 logger = logging.getLogger("blend")
+
+DBZ_HARD_CAP = 65.0
 
 
 # ────────────────────────────────────────────────────────────
@@ -50,7 +46,7 @@ def z_to_dbz(z: np.ndarray, min_z: float = 1e-3) -> np.ndarray:
 
 
 def precip_to_dbz(precip_mmh, a=None, b=None):
-    """mm/h → dBZ (Marshall-Palmer Z-R)."""
+    """mm/h → dBZ (Marshall-Palmer Z-R). Под 0.1 mm/h → NaN."""
     if a is None: a = ICON["zr_a"]
     if b is None: b = ICON["zr_b"]
     R = np.clip(precip_mmh, 0.01, None)
@@ -64,142 +60,66 @@ def precip_to_dbz(precip_mmh, a=None, b=None):
 # Тегла
 # ────────────────────────────────────────────────────────────
 def blend_weights(minutes: float, radar_horizon: float = 60.0) -> tuple[float, float]:
-    """Тегла (radar, icon) като функция на minutes/radar_horizon.
-
-    frac = minutes / radar_horizon (0=сега, 1=край на реалния радарен хоризонт).
-    Преходът следва относителния хоризонт, не абсолютни минути — така при
-    ts=13 мин (хоризонт 156) и ts=4 мин (хоризонт 60) схемата се държи еднакво.
+    """
+    Тегла (radar, icon) спрямо реалния радарен хоризонт.
+    100% радар до 1/3 от хоризонта, после линейно до 0% точно в края му.
+    Така няма скок, когато S-PROG кадрите свършат.
     """
     if radar_horizon <= 0:
         return 0.0, 1.0
     frac = minutes / radar_horizon
-    if frac <= 0.5:
+    if frac <= 1.0 / 3.0:
         return 1.0, 0.0
-    elif frac <= 1.0:
-        w = (frac - 0.5) / 0.5
-        return 1.0 - w * 0.3, w * 0.3          # 100%→70% радар до края на радара
-    elif frac <= 2.0:
-        w = frac - 1.0
-        return 0.7 * (1.0 - w), 0.3 + 0.7 * w  # 70%→0% радар, ICON поема
-    else:
-        return 0.0, 1.0
+    if frac < 1.0:
+        w = (frac - 1.0 / 3.0) / (2.0 / 3.0)
+        return 1.0 - w, w
+    return 0.0, 1.0
 
 
 # ────────────────────────────────────────────────────────────
-# ICON интерполация (по време + пространство)
+# ICON → dBZ
 # ────────────────────────────────────────────────────────────
-def _get_icon_field_raw(icon_data, field, t0_idx, t1_idx, w,
-                         icon_lat, icon_lon, target_lat, target_lon):
-    """Интерполира произволно ICON поле към target grid."""
-    data = icon_data.get(field)
-    if data is None:
-        return np.zeros((len(target_lat), len(target_lon)))
-    p = data[t0_idx] * (1 - w) + data[t1_idx] * w
-    if icon_lat is not None and p.ndim == 2:
-        interp = RegularGridInterpolator(
-            (icon_lat, icon_lon), p,
-            method="linear", bounds_error=False, fill_value=0.0)
-        lon2d, lat2d = np.meshgrid(target_lon, target_lat)
-        pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
-        return interp(pts).reshape(len(target_lat), len(target_lon))
-    return np.full((len(target_lat), len(target_lon)), float(np.mean(p)))
+def _regrid(field2d, icon_data, target_lat, target_lon):
+    """Линейна пространствена интерполация към target grid."""
+    interp = RegularGridInterpolator(
+        (icon_data["lat"], icon_data["lon"]), field2d,
+        method="linear", bounds_error=False, fill_value=0.0)
+    lon2d, lat2d = np.meshgrid(target_lon, target_lat)
+    pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
+    return interp(pts).reshape(len(target_lat), len(target_lon))
+
 
 def interpolate_icon(target_time: dt.datetime,
                      icon_data: dict,
                      target_lat: np.ndarray,
                      target_lon: np.ndarray) -> np.ndarray:
-    """
-    ICON showers → dBZ поле на target grid за целевия момент.
-    Времева интерполация между часовите стъпки, после
-    пространствена (linear) към 1-km мрежата.
-    """
-    valid_times = icon_data["valid_times"]
-    precip = icon_data.get("showers_mm", icon_data.get("precipitation_mm"))
-    icon_lat = icon_data.get("lat")
-    icon_lon = icon_data.get("lon")
+    """ICON → dBZ поле на target grid за целевия момент."""
+    times = icon_data["valid_times"]
+    # Часът, чийто прозорец (vt-1ч, vt] съдържа target_time
+    idx = next((i for i, vt in enumerate(times) if target_time <= vt),
+               len(times) - 1)
 
-    # Времеви скоби
-    t0_idx, t1_idx = None, None
-    for i, vt in enumerate(valid_times[:-1]):
-        if vt <= target_time <= valid_times[i + 1]:
-            t0_idx, t1_idx = i, i + 1
-            break
-    if t0_idx is None:
-        t0_idx = t1_idx = len(valid_times) - 1
+    # Кеш по час — за 72 blend стъпки има само ~7 различни часа
+    cache = icon_data.setdefault("_dbz_cache", {})
+    if idx in cache:
+        return cache[idx]
 
-    if t0_idx == t1_idx:
-        w = 0.0
-    else:
-        span = (valid_times[t1_idx] - valid_times[t0_idx]).total_seconds()
-        off = (target_time - valid_times[t0_idx]).total_seconds()
-        w = max(0.0, min(1.0, off / span)) if span > 0 else 0.0
+    showers = _regrid(icon_data["showers_mm"][idx], icon_data, target_lat, target_lon)
+    dbz = precip_to_dbz(showers)                       # фон
 
-    p_interp = precip[t0_idx] * (1 - w) + precip[t1_idx] * w
+    lpi_all = icon_data.get("lpi")
+    if lpi_all is not None:
+        lpi = _regrid(lpi_all[idx], icon_data, target_lat, target_lon)
+        lpi_pts = ICON_DWD["lpi_anchors"]
+        core_dbz = np.interp(lpi, lpi_pts, ICON_DWD["dbz_anchors"])
+        core = (lpi >= lpi_pts[0]) & (showers >= ICON_DWD["core_min_showers"])
+        dbz[core] = np.fmax(dbz[core], core_dbz[core])
 
-    if icon_lat is not None and icon_lon is not None and p_interp.ndim == 2:
-        interp = RegularGridInterpolator(
-            (icon_lat, icon_lon), p_interp,
-            method="linear", bounds_error=False, fill_value=0.0)
-        lon2d, lat2d = np.meshgrid(target_lon, target_lat)
-        pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
-        p_on_grid = interp(pts).reshape(len(target_lat), len(target_lon))
-    else:
-        p_on_grid = np.full((len(target_lat), len(target_lon)),
-                            float(np.mean(p_interp)))
+    dbz = np.clip(dbz, None, DBZ_HARD_CAP).astype(np.float32)
+    cache[idx] = dbz
+    return dbz
 
-    # Конвективен enhancement (v4 — CAPE вместо LPI):
-    #   showers    → база (къде и колко вали, чист Z-R)
-    #   CAPE       → конвективен маркер: peak_factor + аддитивен dBZ бонус
-    #   cloud_top  → дълбочинен бонус (overshooting → град) + мек таван
-    # LPI не се ползва — ICON-EU през Open-Meteo не връща lightning_potential.
-    cape_field = _get_icon_field_raw(icon_data, "cape", t0_idx, t1_idx, w,
-                                     icon_lat, icon_lon, target_lat, target_lon)
-    ct_field = _get_icon_field_raw(icon_data, "cloud_top", t0_idx, t1_idx, w,
-                                    icon_lat, icon_lon, target_lat, target_lon)
 
-    # cloud_top = -500 е код "няма конвективен облак" → третирай като 0
-    ct_field = np.where(ct_field < 0, 0.0, ct_field)
-
-    CAPE_REF = 2000.0     # CAPE (J/kg) за пълен конвективен ефект
-    BONUS_MAX = 15.0      # макс dBZ добавка от конвекция
-    DEPTH_BONUS = 8.0     # макс dBZ добавка за дълбока конвекция
-    PEAK_BOOST = 2.0      # компенсация за часовото усредняване на showers (в конвекция)
-    DBZ_HARD_CAP = 65.0
-
-    # CAPE нормализация (0=без конвекция, 1=развита конвекция)
-    conv_norm = np.clip(cape_field / CAPE_REF, 0.0, 1.0)
-
-    # Пиков фактор: часовата акумулация усреднява конвективния пик.
-    # Компенсираме само където CAPE показва конвекция (1× без CAPE, до ~3× при висок CAPE).
-    peak_factor = 1.0 + conv_norm * PEAK_BOOST
-    p_peak = p_on_grid * peak_factor
-
-    # База от showers с пиков фактор (NaN където няма валеж)
-    dbz_base = precip_to_dbz(p_peak)
-
-    # Конвективен бонус (аддитивен в dBZ), само където има база
-    dbz_bonus = conv_norm * BONUS_MAX
-
-    # Дълбочинен бонус: 10km→0, 14km→пълен
-    dbz_depth = np.clip((ct_field - 10000.0) / 4000.0, 0.0, 1.0) * DEPTH_BONUS
-
-    # Мек таван: 6km→50, 14km→65 (само където има конвективен облак)
-    dbz_cap = np.where(
-        ct_field > 0,
-        np.clip(50.0 + (ct_field - 6000.0) / 8000.0 * 15.0, 45.0, 65.0),
-        DBZ_HARD_CAP
-    )
-
-    # Комбинация: бонусите само където базата е валидна (има валеж)
-    base_valid = ~np.isnan(dbz_base)
-    dbz_out = dbz_base.copy()
-    dbz_out[base_valid] = np.minimum(
-        dbz_base[base_valid] + dbz_bonus[base_valid] + dbz_depth[base_valid],
-        dbz_cap[base_valid]
-    )
-    dbz_out = np.clip(dbz_out, None, DBZ_HARD_CAP)
-
-    return dbz_out.astype(np.float32)
 # ────────────────────────────────────────────────────────────
 # Главен blend
 # ────────────────────────────────────────────────────────────
@@ -211,51 +131,41 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                        timestep_min: int = None) -> tuple:
     """
     Radar nowcast + ICON върху фиксирана 5-минутна blend ос (360 мин).
-
-    Радарният кадър за всяка целева минута се избира ПО ВРЕМЕ
-    (най-близък timestamp), не по индекс — така радарният timestep
-    може да е произволен (5, 10, 14 мин...).
-
-    Parameters
-    ----------
-    forecast_dbz   : (n_radar, ny, nx) S-PROG кадри
-    forecast_times : list[datetime] — реалните валидни времена на кадрите
-    timestep_min   : игнорира се (за съвместимост); blend оста е 5 мин.
+    Радарният кадър за всяка целева минута се избира ПО ВРЕМЕ.
+    timestep_min се игнорира (за съвместимост).
     """
-    blend_step = 5                      # фиксирана blend мрежа
+    blend_step = 5
     n_total = BLEND["n_steps"]          # 72 → 360 мин
 
     ny, nx = len(target_lat), len(target_lon)
     n_radar = forecast_dbz.shape[0]
 
-    # Референтно време: старт на прогнозата (OBS момент)
     if n_radar >= 1 and len(forecast_times) >= 2:
         radar_step_min = (forecast_times[1] - forecast_times[0]
                           ).total_seconds() / 60.0
     else:
         radar_step_min = 5.0
     ref_time = forecast_times[0] - dt.timedelta(minutes=radar_step_min)
+    radar_horizon = n_radar * radar_step_min
 
-    # Толеранс за времево съответствие радар↔цел:
-    # половин радарна стъпка + 1 мин
     match_tol_min = radar_step_min / 2.0 + 1.0
-
     fc_times_arr = np.array([t.timestamp() for t in forecast_times])
 
     blended = np.full((n_total, ny, nx), np.nan, dtype=np.float32)
     blend_times = []
     actual_weights = []
 
+    run = icon_data.get("run") if icon_data else None
     logger.info(f"Blend: радар {n_radar} кадъра на {radar_step_min:.0f} мин "
-                f"(хоризонт {n_radar*radar_step_min:.0f} мин), "
-                f"blend ос {n_total}×{blend_step} мин")
+                f"(хоризонт {radar_horizon:.0f} мин), blend ос {n_total}×{blend_step} мин"
+                + (f", ICON run {run:%Y-%m-%d %H} UTC" if run else ""))
 
     for step in range(n_total):
         minutes = (step + 1) * blend_step
         target_time = ref_time + dt.timedelta(minutes=minutes)
         blend_times.append(target_time)
 
-        rw, iw = blend_weights(minutes, radar_horizon=n_radar * radar_step_min)
+        rw, iw = blend_weights(minutes, radar_horizon=radar_horizon)
 
         # ── Радар: избор ПО ВРЕМЕ ────────────────────────
         z_radar = None
@@ -267,15 +177,13 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         if z_radar is None:
             z_radar = np.zeros((ny, nx), dtype=np.float32)
             rw = 0.0
-            # преразпредели тежестта към ICON
             if icon_data is not None:
-                iw = 1.0 if minutes > 60 else iw
+                iw = 1.0
 
         # ── ICON ─────────────────────────────────────────
         if iw > 0 and icon_data is not None:
-            icon_dbz = interpolate_icon(target_time, icon_data,
-                                        target_lat, target_lon)
-            z_icon = dbz_to_z(icon_dbz)
+            z_icon = dbz_to_z(interpolate_icon(target_time, icon_data,
+                                               target_lat, target_lon))
         else:
             z_icon = np.zeros((ny, nx), dtype=np.float32)
             iw = 0.0
@@ -286,8 +194,8 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         blended[step] = z_to_dbz(z_blend)
 
         if step % 12 == 0 or step == n_total - 1:
+            mx = np.nanmax(blended[step]) if np.any(~np.isnan(blended[step])) else 0
             logger.info(f"  +{minutes:3d} мин {target_time.strftime('%H:%M')}: "
-                        f"R:{rw:.0%} I:{iw:.0%} "
-                        f"max={np.nanmax(blended[step]) if np.any(~np.isnan(blended[step])) else 0:.1f} dBZ")
+                        f"R:{rw:.0%} I:{iw:.0%} max={mx:.1f} dBZ")
 
     return blended, blend_times, actual_weights

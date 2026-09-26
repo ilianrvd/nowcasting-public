@@ -145,10 +145,17 @@ def main():
     if not args.no_icon:
         log.info("── Фаза 5: ICON-EU + Blending ──")
         try:
-            from src.ingest.icon_eu import fetch_icon_grid
-            icon_data = fetch_icon_grid()
+            from src.ingest.icon_dwd import fetch_icon_dwd
+            icon_data = fetch_icon_dwd()
         except Exception as e:
-            log.warning(f"  ICON: {e}")
+            log.warning(f"  ICON DWD: {e}")
+        if icon_data is None:
+            log.warning("  ICON DWD недостъпен — резерв Open-Meteo (без LPI ядра)")
+            try:
+                from src.ingest.icon_eu import fetch_icon_grid
+                icon_data = fetch_icon_grid()
+            except Exception as e:
+                log.warning(f"  ICON Open-Meteo: {e}")
 
     if icon_data is not None:
         from src.blend.blending import blend_nowcast_icon
