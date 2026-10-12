@@ -167,33 +167,38 @@ def main():
         from src.nowcast.lightning_boost import boost_composites
         li_last = boost_composites(composites, li_frames, n_last=3)
 
-    # ── 5. S-PROG ─────────────────────────────────────────
-    log.info("── Фаза 4: S-PROG Nowcast ──")
-    from src.nowcast.nowcasting import run_sprog
-    forecast = run_sprog(composites)
-
-    if forecast is None:
-        log.error("ФАТАЛНО: Nowcast неуспешен!")
-        sys.exit(1)
-
-    # ── 6. ICON + BLENDING ────────────────────────────────
+    # ── 5. ICON (преди S-PROG: вятърът на 700 hPa проверява движението) ──
     icon_data = None
     blended, blend_times, actual_weights = None, None, None
 
     if not args.no_icon:
-        log.info("── Фаза 5: ICON-EU + Blending ──")
+        log.info("── Фаза 4a: ICON-EU ──")
         try:
             from src.ingest.icon_dwd import fetch_icon_dwd
-            icon_data = fetch_icon_dwd()
+            icon_data = fetch_icon_dwd(t_wind=composites[-1]["timestamp"])
         except Exception as e:
             log.warning(f"  ICON DWD: {e}")
         if icon_data is None:
-            log.warning("  ICON DWD недостъпен — резерв Open-Meteo (без LPI ядра)")
+            log.warning("  ICON DWD недостъпен — резерв Open-Meteo (без LPI ядра и без вятър)")
             try:
                 from src.ingest.icon_eu import fetch_icon_grid
                 icon_data = fetch_icon_grid()
             except Exception as e:
                 log.warning(f"  ICON Open-Meteo: {e}")
+
+    # ── 6. S-PROG ─────────────────────────────────────────
+    log.info("── Фаза 4: S-PROG Nowcast ──")
+    from src.nowcast.nowcasting import run_sprog
+    forecast = run_sprog(composites,
+                         wind700=icon_data.get("wind700") if icon_data else None)
+
+    if forecast is None:
+        log.error("ФАТАЛНО: Nowcast неуспешен!")
+        sys.exit(1)
+
+    # ── 7. BLENDING ───────────────────────────────────────
+    if icon_data is not None:
+        log.info("── Фаза 5: Blending ──")
 
     if icon_data is not None:
         from src.blend.blending import blend_nowcast_icon

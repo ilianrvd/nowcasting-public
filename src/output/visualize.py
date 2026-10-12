@@ -70,7 +70,8 @@ def _mov_text(comp):
         return ""
     if mi["dir_txt"] == "STNR":
         return "   |   STNR"
-    return f"   |   MOV {mi['dir_txt']} {mi['kt']:.0f}KT ({mi['kmh']:.0f} km/h)"
+    src = " [ICON 700 hPa]" if str(mi.get("source", "")).startswith("ICON") else ""
+    return f"   |   MOV {mi['dir_txt']} {mi['kt']:.0f}KT ({mi['kmh']:.0f} km/h){src}"
 
 
 def plot_nowcast(forecast, output_path=None, lightning=None):
@@ -124,13 +125,21 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     obs = np.ma.masked_where(np.isnan(raw) | (raw < 5), raw)
     tr = ccrs.PlateCarree() if HAS_CARTOPY else None
     ax.pcolormesh(comp["lon"], comp["lat"], obs, cmap=cmap, norm=norm, transform=tr)
+    li = comp.get("li_raw")
+    if li is not None and (li >= 1).any():           # MTG LI за последните 15 мин
+        ax.contour(comp["lon"], comp["lat"], (li >= 1).astype(float), levels=[0.5],
+                   colors="black", linewidths=0.6, transform=tr, zorder=11)
+        if (li >= 5).any():
+            ax.contour(comp["lon"], comp["lat"], (li >= 5).astype(float), levels=[0.5],
+                       colors="magenta", linewidths=0.9, transform=tr, zorder=12)
     if lightning:
         ll = [s["lat"] for s in lightning]
         lo = [s["lon"] for s in lightning]
         ax.scatter(lo, ll, s=3, c='yellow', marker='+', alpha=0.7, zorder=10,
                    transform=tr)
     sources = comp.get("sources", [])
-    ax.set_title(f"OBS {comp['timestamp'].strftime('%H:%M')} UTC\n"
+    ax.set_title(f"OBS {comp['timestamp'].strftime('%H:%M')} UTC"
+                 + ("  (контур: мълнии 15 мин)" if li is not None and (li >= 1).any() else "") + "\n"
                  f"{', '.join(sources)}", fontsize=9)
 
     # Forecast panels

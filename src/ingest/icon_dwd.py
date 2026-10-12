@@ -4,6 +4,7 @@ Ingest: ICON-EU директно от DWD Open Data (GRIB2)
 Полета от ЕДИН и същ run:
   rain_con, snow_con — конвективен валеж, акумулиран от началото на run-а (mm)
   lpi_con_max        — Lightning Potential Index, максимум за изминалия час (J/kg)
+  u, v на 700 hPa    — вятър за проверка на движението от радара (една стъпка)
 Runs на всеки 3 ч (00..21 UTC), почасови стъпки до +48 ч,
 публикуване ~2 ч 40 мин след началото на run-а.
 
@@ -118,7 +119,27 @@ def _cleanup(keep_hours: float):
             pass
 
 
-def fetch_icon_dwd(now: dt.datetime = None) -> dict | None:
+
+def _fetch_wind700(run: dt.datetime, t_valid: dt.datetime, cache_dir: str, crop):
+    """U/V на 700 hPa за стъпката, най-близка до t_valid. None при неуспех."""
+    step = int(round((t_valid - run).total_seconds() / 3600))
+    out = {}
+    for comp in ("u", "v"):
+        fname = (f"icon-eu_europe_regular-lat-lon_pressure-level_"
+                 f"{run:%Y%m%d%H}_{step:03d}_700_{comp.upper()}.grib2.bz2")
+        path = os.path.join(cache_dir, fname[:-4])
+        if not os.path.exists(path):
+            url = f"{ICON_DWD['base_url']}/{run.hour:02d}/{comp}/{fname}"
+            r = _session.get(url, timeout=60)
+            r.raise_for_status()
+            with open(path, "wb") as f:
+                f.write(bz2.decompress(r.content))
+        lat, lon, data = _read_grib(path)
+        out[comp] = np.nan_to_num(crop(lat, lon, data))
+    return {"u": out["u"], "v": out["v"], "time": run + dt.timedelta(hours=step)}
+
+
+def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict | None:
     if now is None:
         now = dt.datetime.now(dt.timezone.utc)
 
@@ -179,6 +200,18 @@ def fetch_icon_dwd(now: dt.datetime = None) -> dict | None:
         logger.info(f"  Showers max {showers.max():.1f} mm/h — няма зони ≥ "
                     f"{ICON_DWD['core_min_showers']} mm/h")
 
+    # Вятър на 700 hPa за проверка на движението (не е задължителен)
+    wind700 = None
+    try:
+        wind700 = _fetch_wind700(run, t_wind or now, cache_dir, crop)
+        wind700["lat"], wind700["lon"] = lat_c, lon_c
+        spd = np.hypot(wind700["u"], wind700["v"]) * 1.944
+        logger.info(f"  Вятър 700 hPa ({wind700['time']:%H} UTC): "
+                    f"средно {spd.mean():.0f} KT, max {spd.max():.0f} KT")
+    except Exception as e:
+        logger.warning(f"  Вятър 700 hPa недостъпен: {str(e)[:80]} — без проверка на движението")
+        wind700 = None
+
     _cleanup(ICON_DWD["keep_runs_hours"])
 
     return {
@@ -188,6 +221,7 @@ def fetch_icon_dwd(now: dt.datetime = None) -> dict | None:
         "lon": lon_c,
         "valid_times": times,
         "run": run,
+        "wind700": wind700,
     }
 
 

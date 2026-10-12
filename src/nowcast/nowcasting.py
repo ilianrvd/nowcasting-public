@@ -41,9 +41,12 @@ def compute_motion(composites, raw=True):
         return None
 
     key = (lambda c: c.get("dbz_radar", c["dbz"])) if raw else (lambda c: c["dbz"])
-    R = dbz_to_r(np.stack([key(c) for c in composites]))
+    D = np.stack([key(c) for c in composites])
+    thr = NOWCAST.get("motion_min_dbz", 15.0)       # слабото ехо не се следи
+    D = np.where(np.isfinite(D) & (D < thr), 0.0, D)
+    R = np.where(D > 0, dbz_to_r(D), 0.0)
+    R[np.isnan(D)] = np.nan
     R = np.ma.masked_invalid(R)
-    R[R < 0.05] = 0.0
 
     try:
         from pysteps.motion.lucaskanade import dense_lucaskanade
@@ -85,7 +88,8 @@ def motion_summary(V, last_comp, ts):
     """
     vx, vy = V[0], V[1]
     speed = np.hypot(vx, vy)
-    echo = np.nan_to_num(last_comp["dbz"], nan=0.0) >= 15.0
+    echo = np.nan_to_num(last_comp.get("dbz_radar", last_comp["dbz"]), nan=0.0) \
+        >= NOWCAST.get("motion_min_dbz", 15.0)
     sel = echo & (speed > 0)
     if sel.sum() < 50:
         sel = speed > 0
@@ -98,7 +102,106 @@ def motion_summary(V, last_comp, ts):
     return {"dir_deg": deg, "dir_txt": txt, "kmh": kmh,
             "kt": kmh / 1.852, "n_px": int(sel.sum())}
 
-def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
+
+
+def check_motion_vs_wind(V, last_comp, ts, wind700):
+    """
+    Сравнява средното движение от LK с очакваното движение от ICON
+    (вятърът на 700 hPa × speed_factor ≈ 0.7) върху пикселите с ехо.
+    При голямо отклонение (посока и/или скорост) връща V от ICON (също ×0.7).
+    Връща (V, източник).
+    """
+    from scipy.interpolate import RegularGridInterpolator
+    cfg = NOWCAST["wind_check"]
+    lat, lon = last_comp["lat"], last_comp["lon"]
+    lon2d, lat2d = np.meshgrid(lon, lat)
+    pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
+
+    def rg(f):
+        it = RegularGridInterpolator((wind700["lat"], wind700["lon"]), f,
+                                     bounds_error=False, fill_value=None)
+        return it(pts).reshape(lat2d.shape)
+
+    k = cfg.get("speed_factor", 1.0)                                # движение ≈ 0.7 × вятъра
+    u, v = k * rg(wind700["u"]), k * rg(wind700["v"])               # m/s
+    px_per_ms = ts * 60.0 / 1000.0 / DOMAIN["resolution_km"]        # m/s → px/стъпка
+    V_icon = np.stack([u * px_per_ms, v * px_per_ms]).astype(np.float32)
+
+    echo = np.nan_to_num(last_comp.get("dbz_radar", last_comp["dbz"]), nan=0.0) \
+        >= NOWCAST.get("motion_min_dbz", 15.0)
+    if echo.sum() < 50:
+        echo = np.ones_like(echo)
+    to_kt = DOMAIN["resolution_km"] * 60.0 / ts / 1.852
+    lk = np.array([V[0][echo].mean(), V[1][echo].mean()])
+    ic = np.array([V_icon[0][echo].mean(), V_icon[1][echo].mean()])
+    s_lk, s_ic = np.hypot(*lk) * to_kt, np.hypot(*ic) * to_kt
+    d_lk = (np.degrees(np.arctan2(lk[0], lk[1])) + 360) % 360
+    d_ic = (np.degrees(np.arctan2(ic[0], ic[1])) + 360) % 360
+    ddir = abs((d_lk - d_ic + 180) % 360 - 180)
+
+    bad_dir = (s_lk >= cfg["min_speed_kt"] and s_ic >= cfg["min_speed_kt"]
+               and ddir > cfg["max_dir_diff_deg"])
+    ratio = s_lk / max(s_ic, 1e-3)
+    bad_spd = ((ratio > cfg["max_speed_ratio"] or ratio < 1 / cfg["max_speed_ratio"])
+               and abs(s_lk - s_ic) >= cfg["min_speed_diff_kt"])
+
+    msg = (f"Проверка с ICON 700 hPa ({wind700['time']:%H} UTC): "
+           f"LK {s_lk:.0f}KT към {d_lk:.0f}° | ICON×{k:g} {s_ic:.0f}KT към {d_ic:.0f}° | "
+           f"разлика {ddir:.0f}°, отношение {ratio:.1f}")
+    if bad_dir or bad_spd:
+        why = " и ".join(w for w, b in (("посока", bad_dir), ("скорост", bad_spd)) if b)
+        logger.warning(f"  {msg} → голямо отклонение ({why}) — движението е от ICON")
+        return V_icon, "ICON 700 hPa"
+    logger.info(f"  {msg} → ок, остава LK")
+    return V, "радар (LK)"
+
+def _log_motion_by_region(V, last_comp, ts):
+    """Диагностика: движението поотделно по региони (север RO / ЮИ резерв)."""
+    lat2d, lon2d = np.meshgrid(last_comp["lat"], last_comp["lon"], indexing="ij")
+    regions = {"север (≥43°N)": lat2d >= 43.0,
+               "ЮИ (<43°N, ≥26°E)": (lat2d < 43.0) & (lon2d >= 26.0)}
+    echo = np.nan_to_num(last_comp.get("dbz_radar", last_comp["dbz"]), nan=0.0) >= 15.0
+    parts = []
+    for name, reg in regions.items():
+        sel = reg & echo
+        n = int(sel.sum())
+        if n < 50:
+            parts.append(f"{name}: малко ехо ({n} px)")
+            continue
+        vx, vy = V[0][sel], V[1][sel]
+        kt = lambda a, b: float(np.hypot(a, b)) * DOMAIN["resolution_km"] * 60.0 / ts / 1.852
+        deg = (np.degrees(np.arctan2(vx.mean(), vy.mean())) + 360.0) % 360.0
+        sp = np.hypot(vx, vy) * DOMAIN["resolution_km"] * 60.0 / ts / 1.852
+        parts.append(f"{name}: {kt(vx.mean(), vy.mean()):.0f}KT към {deg:.0f}° "
+                     f"(скорости p10–p90 {np.percentile(sp, 10):.0f}–{np.percentile(sp, 90):.0f}KT, {n} px)")
+    logger.info("  По региони: " + " | ".join(parts))
+
+
+def _dump_series(composites, V, keep_hours=12):
+    """Записва входната серия и V в logs/debug/ — за разбор на странно движение."""
+    try:
+        from config.settings import LOG_DIR
+        d = os.path.join(LOG_DIR, "debug")
+        os.makedirs(d, exist_ok=True)
+        t0 = composites[-1]["timestamp"]
+        path = os.path.join(d, f"series_{t0:%Y%m%d_%H%M}.npz")
+        np.savez_compressed(
+            path,
+            dbz=np.stack([c.get("dbz_radar", c["dbz"]) for c in composites]).astype(np.float16),
+            times=np.array([c["timestamp"].strftime("%Y-%m-%dT%H:%M:%SZ") for c in composites]),
+            sources=np.array([",".join(c.get("sources", [])) for c in composites]),
+            lat=composites[-1]["lat"], lon=composites[-1]["lon"],
+            V=V.astype(np.float32))
+        cutoff = dt.datetime.now().timestamp() - keep_hours * 3600
+        for f in os.listdir(d):
+            fp = os.path.join(d, f)
+            if f.startswith("series_") and os.path.getmtime(fp) < cutoff:
+                os.remove(fp)
+        logger.info(f"  Серията записана: {path}")
+    except Exception as e:
+        logger.warning(f"  Записът на серията не стана: {e}")
+
+def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None, wind700=None):
     """
     S-PROG nowcasting.
     Returns: dict с forecast_dbz, timestamps, motion, last_composite
@@ -135,9 +238,19 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
             logger.info(f"  (за сравнение, от усилените кадри: MOV {mb['dir_txt']} "
                         f"{mb['kt']:.0f}KT — не се ползва)")
 
+    _log_motion_by_region(V, composites[-1], ts)
+    _dump_series(composites, V)
+    motion_src = "радар (LK)"
+    if wind700 is not None:
+        try:
+            V, motion_src = check_motion_vs_wind(V, composites[-1], ts, wind700)
+        except Exception as e:
+            logger.warning(f"  Проверката с ICON не мина: {e}")
+
     motion = motion_summary(V, composites[-1], ts)
+    motion["source"] = motion_src
     composites[-1]["motion_info"] = motion
-    logger.info(f"Optical flow (радар без усилване): MOV {motion['dir_txt']} {motion['kt']:.0f}KT "
+    logger.info(f"Движение [{motion_src}]: MOV {motion['dir_txt']} {motion['kt']:.0f}KT "
                 f"({motion['kmh']:.0f} km/h), към {motion['dir_deg']:.0f}°, "
                 f"по {motion['n_px']} px с ехо")
 
