@@ -39,7 +39,7 @@ jobs:
 
       - name: Run nowcasting
         run: |
-          python run_nowcast.py --lightning-sec 20
+          python run_nowcast.py
 
       - name: Commit & push results
         run: |
