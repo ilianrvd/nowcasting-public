@@ -134,19 +134,20 @@ def main():
     log.info(f"  Общо: {total_frames} frames от {len(all_frames)} източника")
 
     # ── 3. МЪЛНИИ (MTG Lightning Imager) ──────────────────
-    lightning, ltg_density, ltg_lat, ltg_lon = [], None, None, None
+    # Отделните 5-мин кадри за ~40 мин назад: всеки от последните 3 композита
+    # (на 10 мин) взима мълниите от своите 15 мин.
+    lightning, li_frames = [], []
 
     if not args.no_lightning:
         log.info("── Фаза 2: Мълнии (MTG Lightning Imager) ──")
         try:
-            from src.ingest.eumetview import fetch_li_afa
-            li = fetch_li_afa(n_frames=3)            # последните 15 мин
-            if li is not None and li["count"].max() > 0:
-                ltg_density, ltg_lat, ltg_lon = li["count"], li["lat"], li["lon"]
-                rows = (ltg_lat >= DOMAIN["lat_min"]) & (ltg_lat <= DOMAIN["lat_max"])
-                cols = (ltg_lon >= DOMAIN["lon_min"]) & (ltg_lon <= DOMAIN["lon_max"])
-                n_dom = int((ltg_density[np.ix_(rows, cols)] > 0).sum())
-                log.info(f"  От тях в домейна: {n_dom} px")
+            from src.ingest.eumetview import fetch_li_frames
+            li_frames = fetch_li_frames(back_min=40)
+            if li_frames:
+                rows = (li_frames[0]["lat"] >= DOMAIN["lat_min"]) & (li_frames[0]["lat"] <= DOMAIN["lat_max"])
+                cols = (li_frames[0]["lon"] >= DOMAIN["lon_min"]) & (li_frames[0]["lon"] <= DOMAIN["lon_max"])
+                n_dom = int(max((f["count"][np.ix_(rows, cols)] > 0).sum() for f in li_frames))
+                log.info(f"  От тях в домейна: до {n_dom} px в кадър")
         except Exception as e:
             log.warning(f"  LI AFA: {e}")
 
@@ -159,17 +160,21 @@ def main():
         log.error("ФАТАЛНО: Няма composites!")
         sys.exit(1)
 
+    # ── 4b. УСИЛВАНЕ С МЪЛНИИ (преди прогнозата) ─────────
+    li_last = None
+    if li_frames:
+        log.info("── Фаза 3b: Усилване с мълнии (45/55 dBZ където има сигнал) ──")
+        from src.nowcast.lightning_boost import boost_composites
+        li_last = boost_composites(composites, li_frames, n_last=3)
+
     # ── 5. S-PROG ─────────────────────────────────────────
     log.info("── Фаза 4: S-PROG Nowcast ──")
-    from src.nowcast.nowcasting import run_sprog, enhance_with_lightning
+    from src.nowcast.nowcasting import run_sprog
     forecast = run_sprog(composites)
 
     if forecast is None:
         log.error("ФАТАЛНО: Nowcast неуспешен!")
         sys.exit(1)
-
-    if ltg_density is not None:
-        forecast = enhance_with_lightning(forecast, ltg_density, ltg_lat, ltg_lon)
 
     # ── 6. ICON + BLENDING ────────────────────────────────
     icon_data = None
@@ -210,6 +215,10 @@ def main():
                 if h40b is not None and forecast.get("motion") is not None:
                     sat_layer = SatelliteLayer(h40b, forecast["motion"], real_ts,
                                                comp["lat"], comp["lon"])
+                    if li_last is not None:
+                        from config.settings import LIGHTNING_BOOST
+                        sat_layer.apply_lightning(li_last, comp["timestamp"],
+                                                  LIGHTNING_BOOST["sat_signal_mmh"])
             except Exception as e:
                 log.warning(f"  H40B: {e}")
 

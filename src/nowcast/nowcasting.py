@@ -11,7 +11,6 @@ Timestep-ът е реалният интервал между кадрите —
 import os, sys, logging
 import datetime as dt
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from config.settings import NOWCAST, DOMAIN
@@ -29,17 +28,20 @@ def r_to_dbz(R, a=200.0, b=1.6):
     return 10.0 * np.log10(a * R ** b)
 
 
-def compute_motion(composites):
+def compute_motion(composites, raw=True):
     """
     Optical flow (Lucas-Kanade) от поредица composites.
     NaN = извън радарното покритие (маска за LK); 0 dBZ = сухо в покритието.
+    raw=True: движението се смята от радара БЕЗ усилването от мълниите
+    (усилването е за интензивността, не трябва да създава фалшиво движение).
     Връща V в px за една стъпка на входа.
     """
     if len(composites) < 3:
         logger.error("Нужни са поне 3 composites!")
         return None
 
-    R = dbz_to_r(np.stack([c["dbz"] for c in composites]))
+    key = (lambda c: c.get("dbz_radar", c["dbz"])) if raw else (lambda c: c["dbz"])
+    R = dbz_to_r(np.stack([key(c) for c in composites]))
     R = np.ma.masked_invalid(R)
     R[R < 0.05] = 0.0
 
@@ -126,9 +128,16 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
     if V is None:
         return None
 
+    if any("dbz_radar" in c for c in composites):      # диагностика: колко променя усилването
+        V_b = compute_motion(composites, raw=False)
+        if V_b is not None:
+            mb = motion_summary(V_b, composites[-1], ts)
+            logger.info(f"  (за сравнение, от усилените кадри: MOV {mb['dir_txt']} "
+                        f"{mb['kt']:.0f}KT — не се ползва)")
+
     motion = motion_summary(V, composites[-1], ts)
     composites[-1]["motion_info"] = motion
-    logger.info(f"Optical flow: MOV {motion['dir_txt']} {motion['kt']:.0f}KT "
+    logger.info(f"Optical flow (радар без усилване): MOV {motion['dir_txt']} {motion['kt']:.0f}KT "
                 f"({motion['kmh']:.0f} km/h), към {motion['dir_deg']:.0f}°, "
                 f"по {motion['n_px']} px с ехо")
 
@@ -159,37 +168,3 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None):
         "motion": V,
         "last_composite": composites[-1],
     }
-
-
-def enhance_with_lightning(forecast, ltg_density, ltg_lat, ltg_lon,
-                           boost_dbz=10.0):
-    """Усилва прогнозата където има мълнии но слаб/никакъв radar echo."""
-    fc_dbz = forecast["forecast_dbz"].copy()
-    comp_lat = forecast["last_composite"]["lat"]
-    comp_lon = forecast["last_composite"]["lon"]
-
-    if ltg_lat[0] > ltg_lat[-1]:
-        ltg_lat = ltg_lat[::-1]
-        ltg_density = ltg_density[::-1, :]
-
-    interp = RegularGridInterpolator(
-        (ltg_lat, ltg_lon), ltg_density,
-        method="nearest", bounds_error=False, fill_value=0.0)
-    lon2d, lat2d = np.meshgrid(comp_lon, comp_lat)
-    ltg = interp(np.column_stack([lat2d.ravel(), lon2d.ravel()])
-                 ).reshape(len(comp_lat), len(comp_lon))
-
-    mask = ltg > 0.5
-    cnt = 0
-    for t in range(fc_dbz.shape[0]):
-        low = np.isnan(fc_dbz[t]) | (fc_dbz[t] < 30)
-        enh = mask & low
-        fc_dbz[t][enh] = np.maximum(
-            np.nan_to_num(fc_dbz[t][enh], nan=0), 30 + boost_dbz * ltg[enh] / ltg.max())
-        cnt += enh.sum()
-
-    if cnt > 0:
-        logger.info(f"Lightning enhancement: {cnt} px")
-
-    forecast["forecast_dbz"] = fc_dbz
-    return forecast

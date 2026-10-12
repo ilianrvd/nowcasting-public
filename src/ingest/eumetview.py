@@ -29,7 +29,7 @@ def _latest_time(cov: str) -> dt.datetime:
     return dt.datetime.fromisoformat(end.replace("Z", "+00:00"))
 
 
-def _get_coverage(cov: str, t: dt.datetime):
+def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120):
     """GetCoverage → (bands, rows, cols), lat_1d (възходящо), lon_1d."""
     import tifffile
     ts = t.strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -38,7 +38,7 @@ def _get_coverage(cov: str, t: dt.datetime):
               ("subset", f"Lat({BBOX_LAT[0]},{BBOX_LAT[1]})"),
               ("subset", f"Long({BBOX_LON[0]},{BBOX_LON[1]})"),
               ("subset", f'time("{ts}")')]
-    r = _session.get(WCS, params=params, timeout=120)
+    r = requests.get(WCS, params=params, timeout=timeout)   # без общата сесия — безопасно в нишки
     r.raise_for_status()
     if "xml" in r.headers.get("Content-Type", ""):
         raise RuntimeError(f"{cov}: WCS грешка: {r.text[:300]}")
@@ -100,6 +100,57 @@ def _afa_count(rgb: np.ndarray) -> np.ndarray:
     g = rgb[1]
     count = 1.0 + 19.0 * (1.0 - g / 255.0)
     return np.where(colored, np.clip(count, 1.0, 20.0), 0.0).astype(np.float32)
+
+
+def fetch_li_frames(now: dt.datetime = None, back_min: float = 40,
+                    max_age_min: float = 30) -> list[dict]:
+    """
+    Отделните 5-мин кадри на MTG LI за последните back_min минути (без сливане),
+    за да може всеки радарен кадър да вземе мълниите от своя прозорец.
+    Кадър, който не мине и след повторен опит, се пропуска.
+    """
+    import time
+    now = now or dt.datetime.now(dt.timezone.utc)
+    try:
+        t_last = _latest_time("mtg_fd__li_afa")
+    except Exception as e:
+        logger.warning(f"LI AFA недостъпен: {e}")
+        return []
+    age = (now - t_last).total_seconds() / 60
+    if age > max_age_min:
+        logger.warning(f"LI AFA: последният кадър {t_last:%H:%M} UTC е стар ({age:.0f} мин)")
+        return []
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(t):
+        for attempt in (1, 2):
+            try:
+                rgb, lat, lon = _get_coverage("mtg_fd__li_afa", t, timeout=30)
+                return {"time": t, "count": _afa_count(rgb), "lat": lat, "lon": lon}
+            except Exception as e:
+                if attempt == 1:
+                    time.sleep(2)
+                else:
+                    logger.warning(f"LI AFA {t:%H:%M}: пропуснат ({str(e)[:60]})")
+        return None
+
+    times = [t_last - dt.timedelta(minutes=5 * k) for k in range(int(back_min // 5) + 1)]
+    t_start = time.time()
+    with ThreadPoolExecutor(max_workers=4) as ex:      # 4 заявки наведнъж
+        frames = [f for f in ex.map(_one, times) if f is not None]
+    frames.sort(key=lambda f: f["time"])
+
+    if frames:
+        n_px = int(max((f["count"] > 0).sum() for f in frames))
+        mx = max(float(f["count"].max()) for f in frames)
+        logger.info(f"LI AFA: {len(frames)} кадъра {frames[0]['time']:%H:%M}–"
+                    f"{frames[-1]['time']:%H:%M} UTC (закъснение {age:.0f} мин), "
+                    f"до {n_px} px с мълнии в кадър, max {mx:.0f} светкавици/5 мин, "
+                    f"за {time.time() - t_start:.0f} s")
+    else:
+        logger.warning("LI AFA: нито един кадър не мина")
+    return frames
 
 
 def fetch_li_afa(now: dt.datetime = None, n_frames: int = 3,

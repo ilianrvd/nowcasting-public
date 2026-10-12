@@ -25,7 +25,9 @@ from config.settings import DOMAIN, COVERAGE_MASKS, IABG_RADARS, RAINVIEWER_RADA
 logger = logging.getLogger("composite")
 
 GRID_STEP_MIN = 10                       # каденция на RO
-TOL_SEC = {"romania_composite": 60}      # RO точно на марката
+TOL_SEC = {"romania_composite": 60,      # RO точно на марката
+           "rainviewer_TR34": 240}       # Истанбул на 6 мин: ±4 мин, за да не губим
+                                         # последния RO кадър заради закъснението му
 TOL_SEC_DEFAULT = 180                    # ИАБГ ±3 мин
 STALE_MIN = 15                           # източник по-стар от това → изключен
 DBZ_MIN = 15.0                           # под това → сухо (0 dBZ)

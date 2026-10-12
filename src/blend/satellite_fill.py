@@ -54,6 +54,25 @@ class SatelliteLayer:
         logger.info(f"Сателит H40B: {self.time:%H:%M} UTC, валеж ≥{min_rate} mm/h "
                     f"в {n_rain} px, max {rain.max():.1f} mm/h")
 
+    def apply_lightning(self, count: np.ndarray, at_time: dt.datetime,
+                        signal_mmh: float, zr_a: float = 200.0, zr_b: float = 1.6):
+        """
+        Мести H40B до at_time (часа на радара), усилва там с мълниите от същия
+        прозорец (същото правило като за радара) и оттук нататък слоят се движи
+        от at_time с вече усиленото поле.
+        """
+        from src.nowcast.lightning_boost import boost_dbz, _breakdown
+        z0 = self.z_at(at_time)
+        dbz = np.where(z0 > 0, 10.0 * np.log10(np.maximum(z0, 1e-6)), np.nan)
+        signal_dbz = 10.0 * np.log10(zr_a * signal_mmh ** zr_b)
+        brk = _breakdown(dbz, count, signal_dbz, nan_label="без валеж в H40B")
+        dbz, n1, n2 = boost_dbz(dbz, count, signal_dbz)
+        self.z = np.where(np.isfinite(dbz), 10.0 ** (dbz / 10.0), 0.0).astype(np.float32)
+        logger.info(f"Сателит H40B: преместен {self.time:%H:%M}→{at_time:%H:%M} UTC и усилен "
+                    f"с мълнии (сигнал ≥{signal_mmh} mm/h = {signal_dbz:.0f} dBZ) — "
+                    f"до 45 dBZ: {n1} px, до 55 dBZ: {n2} px  [{brk}]")
+        self.time = at_time
+
     def z_at(self, target_time: dt.datetime) -> np.ndarray:
         """Z полето, преместено от часа на H40B до target_time (обратна траектория)."""
         k = (target_time - self.time).total_seconds() / 60.0     # минути

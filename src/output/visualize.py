@@ -120,7 +120,8 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     # Panel 0: OBS
     ax = axes[0]
     _setup_ax(ax)
-    obs = np.ma.masked_where(np.isnan(comp["dbz"]) | (comp["dbz"] < 5), comp["dbz"])
+    raw = comp.get("dbz_radar", comp["dbz"])          # OBS = радарът, без усилването от LI
+    obs = np.ma.masked_where(np.isnan(raw) | (raw < 5), raw)
     tr = ccrs.PlateCarree() if HAS_CARTOPY else None
     ax.pcolormesh(comp["lon"], comp["lat"], obs, cmap=cmap, norm=norm, transform=tr)
     if lightning:
