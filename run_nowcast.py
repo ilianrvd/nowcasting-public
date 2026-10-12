@@ -47,6 +47,8 @@ def main():
     parser.add_argument("--no-romania", action="store_true")
     parser.add_argument("--no-lightning", action="store_true")
     parser.add_argument("--no-icon", action="store_true")
+    parser.add_argument("--no-backup", action="store_true",
+                        help="без резервни радари (Истанбул за STS)")
     parser.add_argument("--no-satellite", action="store_true",
                         help="без H40B за зоните без радар (там ICON от +0)")
     parser.add_argument("--lightning-sec", type=int, default=30,
@@ -100,6 +102,29 @@ def main():
             frames = ingest_iabg(rid, n_frames=15)   # целият час от JSON (4-мин каденция)
             if frames:
                 all_frames[f"iabg_{rid}"] = frames
+
+    # ── 2b. РЕЗЕРВНИ РАДАРИ (Истанбул за STS) ─────────────
+    # Теглят се само ако основният липсва или е застоял спрямо RO.
+    from config.settings import RAINVIEWER_RADARS
+    ro_last = max((f["timestamp"] for f in all_frames.get("romania", [])), default=None)
+    for rid, cfg in RAINVIEWER_RADARS.items():
+        if not cfg.get("enabled") or args.no_backup:
+            continue
+        primary = cfg["backup_for"]                       # напр. "iabg_STS"
+        prim_frames = all_frames.get(primary, [])
+        prim_last = max((f["timestamp"] for f in prim_frames), default=None)
+        stale = (prim_last is None or ro_last is None or
+                 (ro_last - prim_last).total_seconds() / 60 > 15)
+        if not stale:
+            continue
+        log.info(f"── Фаза 1c: резерв {rid} ({cfg['name']}) за {primary} ──")
+        try:
+            from src.ingest.radar_rainviewer import ingest_tr34
+            frames = ingest_tr34(n_frames=6)
+            if frames:
+                all_frames[f"rainviewer_{rid}"] = frames
+        except Exception as e:
+            log.warning(f"  {rid}: {e}")
 
     if not all_frames:
         log.error("ФАТАЛНО: Няма данни от нито един радар!")

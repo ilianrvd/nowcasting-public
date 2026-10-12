@@ -10,6 +10,8 @@ Composite — обединяване на радарните източници 
   - Източник, по-стар от 15 мин спрямо оста, е застоял за целия пуск
     → регионът му остава без покритие.
   - Сухо в покритието = 0 dBZ; извън покритието = NaN.
+  - Резервен радар (RAINVIEWER_RADARS, напр. Истанбул за STS) влиза само
+    когато основният му източник е застоял или липсва — за целия пуск.
 """
 
 import os, sys, logging
@@ -18,7 +20,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import DOMAIN, COVERAGE_MASKS, IABG_RADARS
+from config.settings import DOMAIN, COVERAGE_MASKS, IABG_RADARS, RAINVIEWER_RADARS
 
 logger = logging.getLogger("composite")
 
@@ -81,6 +83,11 @@ def coverage_mask(source, lat2d, lon2d):
         m &= lon2d < rules["lon_max"]
     if source.startswith("iabg_"):
         r = IABG_RADARS[source[5:]]
+        dy = (lat2d - r["lat"]) * 111.0
+        dx = (lon2d - r["lon"]) * 111.0 * np.cos(np.radians(r["lat"]))
+        m &= np.hypot(dx, dy) <= r["range_km"]
+    elif source.startswith("rainviewer_"):
+        r = RAINVIEWER_RADARS[source[11:]]
         dy = (lat2d - r["lat"]) * 111.0
         dx = (lon2d - r["lon"]) * 111.0 * np.cos(np.radians(r["lat"]))
         m &= np.hypot(dx, dy) <= r["range_km"]
@@ -164,6 +171,15 @@ def create_composite_series(all_frames_by_source: dict,
                            f"{age:.0f} мин преди оста) — изключен за пуска")
             continue
         active[src] = frames
+
+    # Резервни радари: само ако основният не е активен
+    for rid, cfg in RAINVIEWER_RADARS.items():
+        src = f"rainviewer_{rid}"
+        if src in active and cfg.get("backup_for") in active:
+            logger.info(f"  {src}: резерв за {cfg['backup_for']}, който е активен — не се ползва")
+            del active[src]
+        elif src in active:
+            logger.info(f"  {src}: резерв за {cfg['backup_for']} (основният липсва/застоял)")
     logger.info(f"Ос: {anchor:%H:%M} UTC, активни: {', '.join(active)}")
 
     # Назад по марките; спираме при първия непълен кадър след началото на серията
