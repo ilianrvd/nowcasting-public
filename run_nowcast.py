@@ -4,7 +4,7 @@ nowcasting_public — Главен pipeline
 ====================================
 1. Румъния composite (ODIM HDF5)
 2. ИАБГ радари (PNG scraping)
-3. Blitzortung мълнии
+3. Мълнии: MTG Lightning Imager (EUMETView)
 4. ICON-EU precipitation
 5. S-PROG nowcasting
 6. Blending с ICON (0–6 часа)
@@ -19,10 +19,12 @@ nowcasting_public — Главен pipeline
 import os, sys, time, logging, argparse
 import datetime as dt
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.settings import (IABG_RADARS, NOWCAST, MAPS_DIR,
-                              LOG_DIR, BASE_DIR)
+                              LOG_DIR, BASE_DIR, DOMAIN)
 
 
 def setup_logging(verbose=False):
@@ -45,7 +47,8 @@ def main():
     parser.add_argument("--no-romania", action="store_true")
     parser.add_argument("--no-lightning", action="store_true")
     parser.add_argument("--no-icon", action="store_true")
-    parser.add_argument("--lightning-sec", type=int, default=30)
+    parser.add_argument("--lightning-sec", type=int, default=30,
+                        help="(не се ползва — остава за съвместимост с workflow-а)")
     parser.add_argument("--n-frames", type=int, default=5)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -60,12 +63,12 @@ def main():
 
     # Изтрий стари входни файлове (>2 часа)
     import glob
+    import re
     from config.settings import ROMANIA_DIR
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
     for pattern in [os.path.join(ROMANIA_DIR, "*.hdf")]:
         for f in glob.glob(pattern):
             try:
-                import re
                 m = re.search(r'(\d{14})', os.path.basename(f))
                 if m:
                     ft = dt.datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
@@ -103,19 +106,22 @@ def main():
     total_frames = sum(len(v) for v in all_frames.values())
     log.info(f"  Общо: {total_frames} frames от {len(all_frames)} източника")
 
-    # ── 3. МЪЛНИИ ─────────────────────────────────────────
+    # ── 3. МЪЛНИИ (MTG Lightning Imager) ──────────────────
     lightning, ltg_density, ltg_lat, ltg_lon = [], None, None, None
 
     if not args.no_lightning:
-        log.info("── Фаза 2: Blitzortung ──")
+        log.info("── Фаза 2: Мълнии (MTG Lightning Imager) ──")
         try:
-            from src.lightning.blitzortung import LightningCollector, strikes_to_grid
-            coll = LightningCollector()
-            lightning = coll.collect_sync(seconds=args.lightning_sec)
-            if lightning:
-                ltg_density, ltg_lat, ltg_lon = strikes_to_grid(lightning)
+            from src.ingest.eumetview import fetch_li_afa
+            li = fetch_li_afa(n_frames=3)            # последните 15 мин
+            if li is not None and li["count"].max() > 0:
+                ltg_density, ltg_lat, ltg_lon = li["count"], li["lat"], li["lon"]
+                rows = (ltg_lat >= DOMAIN["lat_min"]) & (ltg_lat <= DOMAIN["lat_max"])
+                cols = (ltg_lon >= DOMAIN["lon_min"]) & (ltg_lon <= DOMAIN["lon_max"])
+                n_dom = int((ltg_density[np.ix_(rows, cols)] > 0).sum())
+                log.info(f"  От тях в домейна: {n_dom} px")
         except Exception as e:
-            log.warning(f"  Blitzortung: {e}")
+            log.warning(f"  LI AFA: {e}")
 
     # ── 4. COMPOSITE ──────────────────────────────────────
     log.info("── Фаза 3: Composite ──")
@@ -140,7 +146,7 @@ def main():
 
     # ── 6. ICON + BLENDING ────────────────────────────────
     icon_data = None
-    blended, blend_times = None, None
+    blended, blend_times, actual_weights = None, None, None
 
     if not args.no_icon:
         log.info("── Фаза 5: ICON-EU + Blending ──")

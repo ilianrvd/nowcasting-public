@@ -13,3 +13,4 @@ opencv-python-headless>=4.7
 xarray
 cfgrib
 eccodes
+tifffile
