@@ -24,6 +24,37 @@ RADAR_COLORS = [
 ]
 RADAR_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70]
 
+# Посочване на източниците (RainViewer го изисква изрично)
+CREDITS = {
+    "romania_composite": "радар: NMA România",
+    "iabg_GCD": "радар: ИАБГ",
+    "iabg_STS": "радар: ИАБГ",
+    "rainviewer_TR34": "радар Истанбул: MGM, Weather data by RainViewer (rainviewer.com)",
+}
+# Същото за GitHub Pages — с линкове
+CREDIT_LINKS = {
+    "romania_composite": ("NMA România", "https://www.meteoromania.ro/"),
+    "iabg_GCD": ("ИАБГ", "https://www.weathermod-bg.eu/"),
+    "iabg_STS": ("ИАБГ", "https://www.weathermod-bg.eu/"),
+    "rainviewer_TR34": ("MGM (Истанбул) — Weather data by RainViewer", "https://www.rainviewer.com/"),
+}
+FIXED_LINKS = [
+    ("EUMETSAT (MTG Lightning Imager, H SAF H40B)", "https://view.eumetsat.int/"),
+    ("DWD ICON-EU", "https://opendata.dwd.de/"),
+]
+
+
+def _add_credits(fig, comp, extra=()):
+    """Ред с източниците най-долу на картата."""
+    parts = []
+    for s in comp.get("sources", []):
+        c = CREDITS.get(s)
+        if c and c not in parts:
+            parts.append(c)
+    parts += list(extra)
+    fig.text(0.5, 0.005, "Данни: " + " · ".join(parts),
+             ha="center", va="bottom", fontsize=7, color="#555555")
+
 
 def _setup_cmap():
     import matplotlib.colors as mcolors
@@ -121,6 +152,8 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     plt.suptitle(f'NOWCASTING PUBLIC — S-PROG{_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
+    _add_credits(fig, comp, ["мълнии: EUMETSAT MTG LI"])
+
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "nowcast.png")
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
@@ -187,12 +220,27 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
     plt.suptitle(f'BLENDED FORECAST — Radar + ICON-EU (0–6h){_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
+    _add_credits(fig, comp, ["сателит: EUMETSAT / H SAF H40B",
+                             "модел: DWD ICON-EU"])
+
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "blended.png")
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     logger.info(f"Blended карта: {output_path}")
     return output_path
+
+
+def _credit_links(comp):
+    """Списък {name, url} за страницата в GitHub Pages."""
+    out, seen = [], set()
+    for s in comp.get("sources", []):
+        if s in CREDIT_LINKS and CREDIT_LINKS[s][0] not in seen:
+            name, url = CREDIT_LINKS[s]
+            out.append({"name": name, "url": url})
+            seen.add(name)
+    out += [{"name": n, "url": u} for n, u in FIXED_LINKS]
+    return out
 
 
 def generate_pages_data(comp, forecast, blended_dbz, blend_times,
@@ -208,11 +256,12 @@ def generate_pages_data(comp, forecast, blended_dbz, blend_times,
         "nowcast_minutes": NOWCAST["n_leadtimes"] * NOWCAST["timestep_min"],
         "blend_hours": 6,
         "domain": DOMAIN,
+        "credits": _credit_links(comp),
     }
 
     meta_path = os.path.join(output_dir, "meta.json")
-    with open(meta_path, 'w') as f:
-        json.dump(meta, f, indent=2)
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
 
     logger.info(f"Pages meta: {meta_path}")
     return meta_path
