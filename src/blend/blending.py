@@ -1,13 +1,20 @@
 """
-Blending: Radar nowcast + ICON-EU
-==================================
+Blending: Radar nowcast + ICON-EU (+ сателит извън радарното покритие)
+=====================================================================
 Blend мрежата е ФИКСИРАНА: 72 стъпки × 5 мин = 360 мин (6 часа).
 
 За всяка целева минута T:
   - Радар: S-PROG кадърът, най-близък по време до T (в толеранс).
   - ICON: часовият прозорец (h-1, h], който съдържа T — без интерполация
     между часовете, за да се пази силата на ядрата.
-  - Смесване в Z-space: Z = rw*Z_radar + iw*Z_icon.
+  - Смесване в Z-space: Z = rw*Z_obs + iw*Z_icon.
+
+Покритие (по пиксели):
+  cov_w = 1 навътре в радарното покритие, плавно до 0 към ръба, 0 извън.
+  - Със сателит: Z_obs = cov_w*Z_radar + (1-cov_w)*Z_sat(T)
+    (H40B, преместен по вектора на движението от своя час до T).
+  - Без сателит: радарното тегло е rw*cov_w, ICON поема останалото —
+    т.е. извън покритието ICON е 100% още от +0 мин.
 
 ICON → dBZ (v5):
   showers (конвективен валеж за часа) → фон, чист Z-R
@@ -128,11 +135,15 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                        icon_data: dict,
                        target_lat: np.ndarray,
                        target_lon: np.ndarray,
-                       timestep_min: int = None) -> tuple:
+                       timestep_min: int = None,
+                       coverage_w: np.ndarray = None,
+                       sat_layer=None) -> tuple:
     """
     Radar nowcast + ICON върху фиксирана 5-минутна blend ос (360 мин).
     Радарният кадър за всяка целева минута се избира ПО ВРЕМЕ.
     timestep_min се игнорира (за съвместимост).
+    coverage_w: тегло на радарното покритие по пиксели (None = навсякъде 1).
+    sat_layer:  SatelliteLayer за зоните без радар (None = там ICON от +0).
     """
     blend_step = 5
     n_total = BLEND["n_steps"]          # 72 → 360 мин
@@ -160,6 +171,20 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                 f"(хоризонт {radar_horizon:.0f} мин), blend ос {n_total}×{blend_step} мин"
                 + (f", ICON run {run:%Y-%m-%d %H} UTC" if run else ""))
 
+    use_cov = coverage_w is not None and float(coverage_w.min()) < 1.0
+    if use_cov:
+        no_radar = float((coverage_w < 0.5).mean())
+        src = (f"сателит H40B ({sat_layer.time:%H:%M} UTC, "
+               f"{(ref_time - sat_layer.time).total_seconds() / 60:.0f} мин преди радара)"
+               if sat_layer is not None else "ICON от +0 мин")
+        logger.info(f"  Без радар: {no_radar:.0%} от домейна → {src}")
+        if sat_layer is not None:
+            z0 = sat_layer.z_at(ref_time)
+            fill = coverage_w < 0.5
+            n_sat = int(((z0 > 0) & fill).sum())
+            mx_sat = 10 * np.log10(z0[fill].max()) if n_sat else 0.0
+            logger.info(f"  Сателит в зоната без радар: {n_sat} px с валеж, "
+                        f"max {mx_sat:.1f} dBZ (към {ref_time:%H:%M})")
     for step in range(n_total):
         minutes = (step + 1) * blend_step
         target_time = ref_time + dt.timedelta(minutes=minutes)
@@ -181,15 +206,29 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                 iw = 1.0
 
         # ── ICON ─────────────────────────────────────────
-        if iw > 0 and icon_data is not None:
+        # При частично покритие ICON трябва и докато rw=100% (за зоните без радар)
+        need_icon = iw > 0 or (use_cov and rw > 0 and sat_layer is None)
+        if need_icon and icon_data is not None:
             z_icon = dbz_to_z(interpolate_icon(target_time, icon_data,
                                                target_lat, target_lon))
         else:
             z_icon = np.zeros((ny, nx), dtype=np.float32)
-            iw = 0.0
+            if icon_data is None:
+                iw = 0.0
 
         # ── Z-space смесване ─────────────────────────────
-        z_blend = rw * z_radar + iw * z_icon
+        if use_cov and rw > 0:
+            if sat_layer is not None:
+                z_obs = coverage_w * z_radar + (1.0 - coverage_w) * sat_layer.z_at(target_time)
+                z_blend = rw * z_obs + iw * z_icon
+            elif icon_data is not None:
+                w_r = rw * coverage_w
+                z_blend = w_r * z_radar + (1.0 - w_r) * z_icon
+            else:
+                z_blend = rw * coverage_w * z_radar
+        else:
+            z_blend = rw * z_radar + iw * z_icon
+
         actual_weights.append((rw, iw))
         blended[step] = z_to_dbz(z_blend)
 

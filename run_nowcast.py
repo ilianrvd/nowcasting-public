@@ -47,6 +47,8 @@ def main():
     parser.add_argument("--no-romania", action="store_true")
     parser.add_argument("--no-lightning", action="store_true")
     parser.add_argument("--no-icon", action="store_true")
+    parser.add_argument("--no-satellite", action="store_true",
+                        help="без H40B за зоните без радар (там ICON от +0)")
     parser.add_argument("--lightning-sec", type=int, default=30,
                         help="(не се ползва — остава за съвместимост с workflow-а)")
     parser.add_argument("--n-frames", type=int, default=5)
@@ -172,10 +174,24 @@ def main():
             real_ts = round((fc_times[1] - fc_times[0]).total_seconds() / 60)
         else:
             real_ts = 5
+        # Покритие по пиксели + сателит H40B само ако има зона без радар
+        from src.blend.satellite_fill import coverage_weight, SatelliteLayer
+        cov_w = coverage_weight(comp["dbz"])
+        sat_layer = None
+        if float((cov_w < 1.0).mean()) > 0.01 and not args.no_satellite:
+            try:
+                from src.ingest.eumetview import fetch_h40b
+                h40b = fetch_h40b()
+                if h40b is not None and forecast.get("motion") is not None:
+                    sat_layer = SatelliteLayer(h40b, forecast["motion"], real_ts,
+                                               comp["lat"], comp["lon"])
+            except Exception as e:
+                log.warning(f"  H40B: {e}")
+
         blended, blend_times, actual_weights = blend_nowcast_icon(
             forecast["forecast_dbz"], forecast["timestamps"],
             icon_data, comp["lat"], comp["lon"],
-            timestep_min=real_ts)
+            timestep_min=real_ts, coverage_w=cov_w, sat_layer=sat_layer)
 
     # ── 7. ВИЗУАЛИЗАЦИЯ ──────────────────────────────────
     log.info("── Фаза 6: Карти ──")
