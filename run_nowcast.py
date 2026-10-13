@@ -217,7 +217,8 @@ def main():
                 if li_last is not None:
                     from config.settings import LIGHTNING_BOOST
                     sat_layer.apply_lightning(li_last, comp["timestamp"],
-                                              LIGHTNING_BOOST["sat_signal_mmh"])
+                                              LIGHTNING_BOOST["sat_signal_mmh"],
+                                              LIGHTNING_BOOST.get("sat_intense_min_mmh"))
         except Exception as e:
             log.warning(f"  H40B: {e}")
         if sat_layer is not None:

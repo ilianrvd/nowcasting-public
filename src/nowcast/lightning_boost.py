@@ -56,15 +56,18 @@ def li_window(li_frames: list[dict], t_end: dt.datetime,
     return count, len(sel)
 
 
-def boost_dbz(dbz: np.ndarray, count: np.ndarray, signal_dbz: float):
+def boost_dbz(dbz: np.ndarray, count: np.ndarray, signal_dbz: float,
+              intense_signal_dbz: float = None):
     """
     dBZ = max(dBZ, 45/55) там, където dBZ ≥ signal_dbz и има мълнии.
+    intense_signal_dbz: по-висок праг за 55 dBZ (ползва се при H40B).
     NaN (без покритие) остава NaN. Връща (ново поле, px до 45, px до 55).
     """
     out = dbz.copy()
     sig = np.isfinite(out) & (out >= signal_dbz)
+    sig_int = sig if intense_signal_dbz is None else sig & (out >= intense_signal_dbz)
     single = sig & (count >= 1)
-    intense = sig & (count >= CFG["intense_count"])
+    intense = sig_int & (count >= CFG["intense_count"])
     n1 = int((single & (out < CFG["single_dbz"])).sum())
     n2 = int((intense & (out < CFG["intense_dbz"])).sum())
     out[single] = np.maximum(out[single], CFG["single_dbz"])

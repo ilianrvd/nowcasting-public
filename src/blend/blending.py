@@ -16,10 +16,15 @@ Blend мрежата е ФИКСИРАНА: 72 стъпки × 5 мин = 360 м
   - Без сателит: радарното тегло е rw*cov_w, ICON поема останалото —
     т.е. извън покритието ICON е 100% още от +0 мин.
 
-ICON → dBZ (v5):
-  showers (конвективен валеж за часа) → фон, чист Z-R
+ICON → dBZ (v7, 13.10.2026):
+  ОБЩ валеж за часа (слоест + конвективен) → фон, чист Z-R
+  (v6 ползваше само конвективния → при слоест/фронтален валеж ICON беше почти празен)
   LPI → ядра, само върху фон ≥ core_min_showers; dBZ = max(фон, ядро)
   LPI → dBZ по опорни точки от settings.ICON_DWD
+  Ядра от LPI само където конвективният валеж ≥ core_min_showers.
+  Таван според (общия) валеж: dBZ ≤ фон + core_max_above_bg_db (18 dB ≈ пик ~13× часовия
+  среден валеж). LPI казва КЪДЕ има конвекция, валежът — КОЛКО силна може да е:
+  0.5 mm/h → ≤36, 2 → ≤46, 5 → ≤52, 10 → ≤57, ≥20 → ≤62–65 dBZ.
 """
 
 import os, sys, logging
@@ -112,7 +117,14 @@ def interpolate_icon(target_time: dt.datetime,
         return cache[idx]
 
     showers = _regrid(icon_data["showers_mm"][idx], icon_data, target_lat, target_lon)
-    dbz = precip_to_dbz(showers)                       # фон
+    # Фон от общия валеж (DWD: total_mm; Open-Meteo резерв: precipitation_mm)
+    tot_key = "total_mm" if "total_mm" in icon_data else "precipitation_mm"
+    if tot_key in icon_data and np.ndim(icon_data[tot_key]) == 3:
+        total = np.maximum(_regrid(icon_data[tot_key][idx], icon_data, target_lat, target_lon), showers)
+    else:
+        total = showers
+    bg = precip_to_dbz(total)                          # фон
+    dbz = bg.copy()
 
     lpi_all = icon_data.get("lpi")
     if lpi_all is not None:
@@ -120,7 +132,14 @@ def interpolate_icon(target_time: dt.datetime,
         lpi_pts = ICON_DWD["lpi_anchors"]
         core_dbz = np.interp(lpi, lpi_pts, ICON_DWD["dbz_anchors"])
         core = (lpi >= lpi_pts[0]) & (showers >= ICON_DWD["core_min_showers"])
+        # Таван според валежа: ядрото е най-много с Δ dB над фона
+        cap = bg + ICON_DWD.get("core_max_above_bg_db", 99.0)
+        capped = core & (core_dbz > cap)
+        core_dbz = np.fmin(core_dbz, cap)
         dbz[core] = np.fmax(dbz[core], core_dbz[core])
+        if core.any():
+            logger.info(f"  ICON {times[idx]:%H} UTC: ядра от LPI {int(core.sum())} px, "
+                        f"max {np.nanmax(dbz[core]):.0f} dBZ; ограничени от валежа {int(capped.sum())} px")
 
     dbz = np.clip(dbz, None, DBZ_HARD_CAP).astype(np.float32)
     cache[idx] = dbz

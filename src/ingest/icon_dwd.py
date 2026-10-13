@@ -2,6 +2,7 @@
 Ingest: ICON-EU директно от DWD Open Data (GRIB2)
 =================================================
 Полета от ЕДИН и същ run:
+  tot_prec           — общ валеж (слоест + конвективен), акумулиран (mm) → фон
   rain_con, snow_con — конвективен валеж, акумулиран от началото на run-а (mm)
   lpi_con_max        — Lightning Potential Index, максимум за изминалия час (J/kg)
   u, v на 700 hPa    — вятър за проверка на движението от радара (една стъпка)
@@ -9,6 +10,7 @@ Runs на всеки 3 ч (00..21 UTC), почасови стъпки до +48 �
 публикуване ~2 ч 40 мин след началото на run-а.
 
 Изход (за blending.py):
+  total_mm    (T, ny, nx) — общ валеж за часа (h-1, h]
   showers_mm  (T, ny, nx) — конвективен валеж за часа (h-1, h]
   lpi         (T, ny, nx) — LPI максимум за часа (h-1, h]
   lat, lon    — възходящи 1D оси, изрязани до DOMAIN
@@ -25,7 +27,7 @@ from config.settings import DOMAIN, ICON_DIR, ICON_DWD
 
 logger = logging.getLogger("ingest.icon_dwd")
 
-FIELDS = ("rain_con", "snow_con", "lpi_con_max")
+FIELDS = ("tot_prec", "rain_con", "snow_con", "lpi_con_max")
 FORECAST_HOURS = 6
 MARGIN_DEG = 0.3          # поле около домейна при изрязване
 _session = requests.Session()
@@ -171,23 +173,30 @@ def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict 
         out = data[np.ix_(iy, ix)]
         return out[::-1, :] if flip else out
 
-    # Акумулиран конвективен валеж → часови суми
-    acc = {}
+    # Акумулиран валеж (общ и конвективен) → часови суми
+    acc, acc_tot = {}, {}
     for s in range(max(0, s0 - 1), s1 + 1):
         r = crop(*_load(run, s, "rain_con", urls["rain_con"], cache_dir))
         sn = crop(*_load(run, s, "snow_con", urls["snow_con"], cache_dir))
         acc[s] = np.nan_to_num(r) + np.nan_to_num(sn)
+        acc_tot[s] = np.nan_to_num(crop(*_load(run, s, "tot_prec", urls["tot_prec"], cache_dir)))
 
-    showers, lpi, times = [], [], []
+    showers, total, lpi, times = [], [], [], []
     for s in range(s0, s1 + 1):
         prev = acc.get(s - 1, np.zeros_like(acc[s]))
         showers.append(np.clip(acc[s] - prev, 0.0, None))
+        prev_t = acc_tot.get(s - 1, np.zeros_like(acc_tot[s]))
+        total.append(np.clip(acc_tot[s] - prev_t, 0.0, None))
         lpi.append(np.nan_to_num(crop(*_load(run, s, "lpi_con_max",
                                              urls["lpi_con_max"], cache_dir))))
         times.append(run + dt.timedelta(hours=s))
 
     showers = np.stack(showers).astype(np.float32)
+    total = np.maximum(np.stack(total).astype(np.float32), showers)   # общият ≥ конвективния
     lpi = np.stack(lpi).astype(np.float32)
+
+    logger.info(f"  Общ валеж max {total.max():.1f} mm/h, ≥0.1 mm/h в {(total >= 0.1).mean():.0%} "
+                f"от полето | конвективен ≥0.1 mm/h в {(showers >= 0.1).mean():.0%}")
 
     # Статистика за калибровка на праговете (само във валежните зони)
     rain = showers >= ICON_DWD["core_min_showers"]
@@ -215,6 +224,7 @@ def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict 
     _cleanup(ICON_DWD["keep_runs_hours"])
 
     return {
+        "total_mm": total,
         "showers_mm": showers,
         "lpi": lpi,
         "lat": lat_c,
