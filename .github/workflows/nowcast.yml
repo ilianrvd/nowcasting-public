@@ -3,7 +3,8 @@ name: Nowcasting Public
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0,30 4-18 * * *'
+    # :06 и :36 — малко след RO (излиза ~5 мин след слота), H40B и LI са вече налични
+    - cron: '6,36 4-18 * * *'
 
 permissions:
   contents: write
@@ -48,4 +49,5 @@ jobs:
           git add docs/maps/
           git add -f data/output/maps/nowcast_latest.png data/output/maps/blended_latest.png data/output/maps/meta.json
           git diff --staged --quiet || git commit -m "Nowcast $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git pull --rebase -X theirs || true   # ако междувременно е качен код
           git push

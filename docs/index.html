@@ -162,18 +162,13 @@
   <div id="main-content" style="display:none;">
     <header>
       <h1>⛈ Nowcasting Bulgaria — Public</h1>
-      <p>Радар: Румъния (ODIM) + ИАБГ (GCD, STS, BRD) · Мълнии: Blitzortung · NWP: ICON-EU</p>
+      <p>Радар: Румъния + ИАБГ (в сезона) / Истанбул · Сателит: H40B · Мълнии: MTG LI · NWP: ICON-EU</p>
       <div id="status">Зареждане...</div>
     </header>
 
     <div class="container">
-      <div class="sources">
-        <span class="badge ro">🇷🇴 Romania COMPOSITE</span>
-        <span class="badge iabg">🇧🇬 Голям Чардак</span>
-        <span class="badge iabg">🇧🇬 Старо Село</span>
-        <span class="badge iabg">🇧🇬 Бърдарски геран</span>
-        <span class="badge ltg">⚡ Blitzortung</span>
-        <span class="badge icon">🌤 ICON-EU</span>
+      <div class="sources" id="sources">
+        <!-- попълва се от maps/meta.json (реално ползваните източници) -->
       </div>
 
       <div class="grid">
@@ -192,10 +187,7 @@
     </div>
 
     <footer>
-      Данни: <a href="https://www.meteoromania.ro/radar/">ANM Romania</a> ·
-      <a href="https://www.weathermod-bg.eu/">ИАБГ</a> ·
-      <a href="https://www.blitzortung.org/">Blitzortung</a> ·
-      <a href="https://open-meteo.com/">Open-Meteo / DWD ICON-EU</a>
+      Данни: <span id="credits">—</span>
       <br>Обновява се автоматично чрез GitHub Actions
     </footer>
 
@@ -218,6 +210,28 @@
 
           document.getElementById('blended-meta').textContent =
             `Blending: 0–${meta.blend_hours}h · Radar → ICON-EU`;
+
+          // Източници: значки според реално ползваните радари + постоянните
+          const BADGE = {
+            romania_composite: ['ro', '🇷🇴 Румъния'],
+            iabg_GCD: ['iabg', '🇧🇬 Голям Чардак'],
+            iabg_STS: ['iabg', '🇧🇬 Старо Село'],
+            iabg_BRD: ['iabg', '🇧🇬 Бърдарски геран'],
+            rainviewer_TR34: ['iabg', '🇹🇷 Истанбул (MGM)'],
+          };
+          const badges = (meta.sources || []).filter(s => BADGE[s])
+            .map(s => `<span class="badge ${BADGE[s][0]}">${BADGE[s][1]}</span>`);
+          badges.push('<span class="badge icon">🛰 H40B</span>',
+                      '<span class="badge ltg">⚡ MTG LI</span>',
+                      '<span class="badge icon">🌤 ICON-EU</span>');
+          document.getElementById('sources').innerHTML = badges.join(' ');
+
+          // Линкове към източниците (RainViewer изисква атрибуция с линк)
+          if (meta.credits) {
+            document.getElementById('credits').innerHTML = meta.credits
+              .map(c => `<a href="${c.url}" target="_blank" rel="noopener">${c.name}</a>`)
+              .join(' · ');
+          }
 
           // Cache-bust images
           const ts = Date.now();

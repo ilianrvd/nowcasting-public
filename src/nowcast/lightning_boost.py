@@ -72,7 +72,6 @@ def boost_dbz(dbz: np.ndarray, count: np.ndarray, signal_dbz: float):
     return out, n1, n2
 
 
-
 def _breakdown(dbz: np.ndarray, count: np.ndarray, signal_dbz: float,
                nan_label: str = "без радар") -> str:
     """Къде попадат мълниите (след разширението) — за диагностика в лога."""
@@ -88,32 +87,6 @@ def _breakdown(dbz: np.ndarray, count: np.ndarray, signal_dbz: float,
             f"вече ≥{CFG['single_dbz']:.0f} dBZ {strong}")
 
 
-def _offset_check(li_raw: np.ndarray, dbz: np.ndarray, lat: np.ndarray, max_km: int = 30):
-    """
-    Диагностика: при какво изместване мълниите най-добре попадат върху ехото ≥30 dBZ.
-    Ако е систематично (напр. 10–20 km към N), това е паралакс/геореференция на LI.
-    """
-    ltg = li_raw >= 1
-    echo = np.nan_to_num(dbz, nan=0.0) >= 30.0
-    n = int(ltg.sum())
-    if n < 5 or echo.sum() < 20:
-        return None
-    km = abs(float(lat[1] - lat[0])) * 111.0
-    r = int(round(max_km / km))
-    ys, xs = np.nonzero(ltg)
-    ny, nx = echo.shape
-    best, best_dy, best_dx = -1, 0, 0
-    for dy in range(-r, r + 1, 2):
-        for dx in range(-r, r + 1, 2):
-            yy, xx = ys - dy, xs - dx              # мълнията изместена с (-dy,-dx) → ехото
-            ok = (yy >= 0) & (yy < ny) & (xx >= 0) & (xx < nx)
-            hit = int(echo[yy[ok], xx[ok]].sum())
-            if hit > best:
-                best, best_dy, best_dx = hit, dy, dx
-    hit0 = int(echo[ys, xs].sum())
-    return {"dy_km": best_dy * km, "dx_km": best_dx * km,
-            "hit0": hit0 / n, "hit": best / n, "n": n}
-
 def boost_composites(composites: list[dict], li_frames: list[dict], n_last: int = 3):
     """
     Усилва последните n_last композита (тези, които S-PROG ползва),
@@ -125,16 +98,9 @@ def boost_composites(composites: list[dict], li_frames: list[dict], n_last: int 
         count, n_li = li_window(li_frames, comp["timestamp"], comp["lat"], comp["lon"])
         if comp is composites[-1]:
             last_count = count
-            # за OBS панела: мълниите без разширение (проверка на съвпадението с ехото)
+            # за контура на OBS панела: мълниите без разширение
             comp["li_raw"], _ = li_window(li_frames, comp["timestamp"],
                                           comp["lat"], comp["lon"], dilate=False)
-            if comp["li_raw"] is not None:
-                o = _offset_check(comp["li_raw"], comp["dbz"], comp["lat"])
-                if o:
-                    logger.info(f"  LI спрямо ехото ≥30 dBZ ({o['n']} px с мълнии): "
-                                f"на място {o['hit0']:.0%} попадение; най-добро {o['hit']:.0%}, "
-                                f"ако мълниите са изместени с {o['dy_km']:+.0f} km N, "
-                                f"{o['dx_km']:+.0f} km E от ехото")
         if count is None:
             logger.info(f"  {comp['timestamp']:%H:%M}: няма LI кадри в прозореца — без усилване")
             continue

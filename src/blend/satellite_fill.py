@@ -78,3 +78,34 @@ class SatelliteLayer:
         k = (target_time - self.time).total_seconds() / 60.0     # минути
         coords = [self.yy - self.vy * k, self.xx - self.vx * k]
         return map_coordinates(self.z, coords, order=1, mode="constant", cval=0.0)
+
+
+def fill_nowcast_for_map(forecast: dict, cov_w: np.ndarray, sat_layer) -> None:
+    """
+    За nowcast картата: в зоната без радар показва H40B (преместен до всеки час),
+    смесен с радара по същото тегло на покритието като в blend-а:
+        Z = cov·Z_радар + (1−cov)·Z_сателит
+    Записва forecast["forecast_dbz_plot"] и last_composite["dbz_obs_plot"].
+    Самата прогноза (forecast_dbz) не се променя.
+    """
+    def to_z(d):
+        d = np.nan_to_num(d, nan=-999.0)
+        return np.where(d > -900, 10.0 ** (d / 10.0), 0.0)
+
+    def to_dbz(z):
+        out = np.full(z.shape, np.nan, dtype=np.float32)
+        ok = z > 1.0                      # > 0 dBZ
+        out[ok] = 10.0 * np.log10(z[ok])
+        return out
+
+    comp = forecast["last_composite"]
+    obs = comp.get("dbz_radar", comp["dbz"])
+    z_obs = cov_w * to_z(obs) + (1.0 - cov_w) * sat_layer.z_at(comp["timestamp"])
+    comp["dbz_obs_plot"] = to_dbz(z_obs)
+
+    fc = forecast["forecast_dbz"]
+    out = np.empty_like(fc)
+    for i, t in enumerate(forecast["timestamps"]):
+        out[i] = to_dbz(cov_w * to_z(fc[i]) + (1.0 - cov_w) * sat_layer.z_at(t))
+    forecast["forecast_dbz_plot"] = out
+    comp["sat_on_map"] = True

@@ -2,11 +2,11 @@
 nowcasting_public — Конфигурация
 ================================
 Публична nowcasting система за България.
-Данни: Румъния (ODIM HDF5), ИАБГ радари (PNG), Blitzortung, ICON-EU.
+Данни: Румъния (ODIM HDF5), ИАБГ радари (PNG, в сезона), Истанбул TR34 (RainViewer),
+EUMETSAT MTG LI (мълнии) и H SAF H40B (валеж), DWD ICON-EU.
 """
 
 import os
-import numpy as np
 
 # ============================================================
 # ДОМЕЙН
@@ -134,20 +134,7 @@ LIGHTNING_BOOST = {
 }
 
 # ============================================================
-# BLITZORTUNG (не се ползва — заменен от MTG LI)
-# ============================================================
-BLITZORTUNG = {
-    "ws_url": "wss://ws1.blitzortung.org",
-    "subscribe_msg": '{"a": 111}',
-    "bbox": {
-        "lat_min": 41.0, "lat_max": 44.5,
-        "lon_min": 21.0, "lon_max": 29.5,
-    },
-    "collect_seconds": 60,
-}
-
-# ============================================================
-# ICON-EU (за blending, от Open-Meteo)
+# ICON-EU от Open-Meteo — резерв, ако DWD е недостъпен; Z-R за целия blend
 # ============================================================
 ICON = {
     "api_url": "https://api.open-meteo.com/v1/dwd-icon",
@@ -177,19 +164,21 @@ ICON_DWD = {
 # NOWCASTING
 # ============================================================
 NOWCAST = {
-    "timestep_min": 5,
-    "n_leadtimes": 12,       # 12 × 5 = 60 мин S-PROG
+    # Стъпката идва от серията (10 мин, RO); хоризонтът е HORIZON_MIN в nowcasting.py
     "n_cascade_levels": 6,
-    "min_dbz": 10.0,
     # Движение (Lucas-Kanade): само ехо ≥ този праг — слабите петна не се следят
     "motion_min_dbz": 20.0,
     # Проверка срещу вятъра на 700 hPa от ICON: при голямо отклонение V = вятърът
     "wind_check": {
-        "speed_factor": 0.7,        # системите се движат с ~0.7 от водещия поток
-        "max_dir_diff_deg": 45.0,   # разлика в посоката (само ако и двете са ≥ min_speed_kt)
-        "max_speed_ratio": 2.0,     # LK/ICON извън [1/2, 2] …
-        "min_speed_diff_kt": 10.0,  # … и разлика поне толкова (за да не реагира при слаб вятър)
+        # Сравнение ПО РЕГИОНИ (север/ЮИ/ЮЗ). 12.10.2026: клетките в Тракия ~40 km/h,
+        # ICON 700 hPa там 40–50 km/h → движението ≈ 1.0 × вятъра (не 0.7).
+        "speed_factor": 1.0,
+        "max_dir_diff_deg": 45.0,   # разлика в посоката (ако и двете са ≥ min_speed_kt)
+        "max_speed_ratio": 1.5,     # LK/ICON извън [1/1.5, 1.5] …
+        "min_speed_diff_kt": 8.0,   # … и разлика поне толкова
         "min_speed_kt": 8.0,
+        "min_echo_px": 50,          # регион с по-малко ехо → движението е от ICON
+        "blend_sigma_px": 25,       # плавен преход LK↔ICON между регионите (px ≈ km)
     },
 }
 
@@ -197,9 +186,7 @@ NOWCAST = {
 # BLENDING
 # ============================================================
 BLEND = {
-    "total_hours": 6,
-    "timestep_min": 5,
-    "n_steps": 72,           # 6h × 12 стъпки/час
+    "n_steps": 72,           # 72 × 5 мин = 6 часа
 }
 
 # ============================================================
@@ -209,13 +196,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR     = os.path.join(BASE_DIR, "data")
 RADAR_DIR    = os.path.join(DATA_DIR, "radar")
 ROMANIA_DIR  = os.path.join(RADAR_DIR, "romania")
-LIGHTNING_DIR = os.path.join(DATA_DIR, "lightning")
 ICON_DIR     = os.path.join(DATA_DIR, "icon")
 OUTPUT_DIR   = os.path.join(DATA_DIR, "output")
 MAPS_DIR     = os.path.join(OUTPUT_DIR, "maps")
 LOG_DIR      = os.path.join(BASE_DIR, "logs")
 PAGES_DIR    = os.path.join(BASE_DIR, "docs")
 
-for d in [RADAR_DIR, ROMANIA_DIR, LIGHTNING_DIR, ICON_DIR,
+for d in [RADAR_DIR, ROMANIA_DIR, ICON_DIR,
           OUTPUT_DIR, MAPS_DIR, LOG_DIR, PAGES_DIR]:
     os.makedirs(d, exist_ok=True)

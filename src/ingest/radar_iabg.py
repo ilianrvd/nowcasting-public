@@ -6,7 +6,7 @@ Ingest: ИАБГ радари (PNG от weathermod-bg.eu)
 Радари: GCD (Голям Чардак), STS (Старо Село), BRD (Бърдарски геран).
 """
 
-import os, sys, json, logging, re
+import os, sys, logging, re
 import datetime as dt
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -16,7 +16,7 @@ import requests
 from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import IABG_RADARS, COLORMAP_RGB_TO_DBZ, RADAR_DIR
+from config.settings import IABG_RADARS, COLORMAP_RGB_TO_DBZ
 
 logger = logging.getLogger("ingest.iabg")
 
@@ -162,6 +162,20 @@ def ingest_iabg(radar_id: str, n_frames: int = 5) -> list[dict]:
     file_list = fetch_file_list(radar_id)
     if not file_list:
         return []
+
+    # Застоял радар (напр. извън сезона) → не теглим PNG-тата изобщо;
+    # composite.py така или иначе би го изключил (>15 мин спрямо оста).
+    age_min = (dt.datetime.now(dt.timezone.utc) - file_list[-1]["timestamp"]).total_seconds() / 60
+    if age_min > 60:
+        logger.warning(f"[{radar_id}] последният файл е от {file_list[-1]['timestamp']:%d.%m %H:%M} UTC "
+                       f"({age_min / 60:.0f} ч) — радарът е спрял, не се тегли")
+        return []
+
+    # Един файл на скан: JSON-ът понякога дава два продукта с еднакъв час
+    uniq = {}
+    for f in file_list:
+        uniq.setdefault(f["timestamp"], f)
+    file_list = sorted(uniq.values(), key=lambda f: f["timestamp"])
 
     latest = file_list[-n_frames:]
     frames = []

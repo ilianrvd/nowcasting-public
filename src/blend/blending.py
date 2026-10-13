@@ -135,13 +135,11 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                        icon_data: dict,
                        target_lat: np.ndarray,
                        target_lon: np.ndarray,
-                       timestep_min: int = None,
                        coverage_w: np.ndarray = None,
                        sat_layer=None) -> tuple:
     """
     Radar nowcast + ICON върху фиксирана 5-минутна blend ос (360 мин).
     Радарният кадър за всяка целева минута се избира ПО ВРЕМЕ.
-    timestep_min се игнорира (за съвместимост).
     coverage_w: тегло на радарното покритие по пиксели (None = навсякъде 1).
     sat_layer:  SatelliteLayer за зоните без радар (None = там ICON от +0).
     """

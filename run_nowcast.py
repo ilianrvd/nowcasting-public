@@ -2,18 +2,17 @@
 """
 nowcasting_public — Главен pipeline
 ====================================
-1. Румъния composite (ODIM HDF5)
-2. ИАБГ радари (PNG scraping)
-3. Мълнии: MTG Lightning Imager (EUMETView)
-4. ICON-EU precipitation
-5. S-PROG nowcasting
-6. Blending с ICON (0–6 часа)
+1. Радари: Румъния (ODIM HDF5) + ИАБГ (PNG, в сезона) → резерв Истанбул (TR34)
+2. Мълнии: MTG Lightning Imager (EUMETView); H40B се тегли паралелно
+3. Композит на 10-мин ос + усилване с мълнии (45/55 dBZ)
+4. ICON-EU (DWD): валеж, LPI, вятър 700 hPa
+5. S-PROG; движение от LK, проверено с ICON по региони
+6. Сателит H40B за зоната без радар; blending с ICON (0–6 часа)
 7. PNG карти + GitHub Pages данни
 
 Стартирай:
   python run_nowcast.py
-  python run_nowcast.py --no-lightning --no-icon
-  python run_nowcast.py --iabg GCD,STS
+  python run_nowcast.py --no-lightning --no-icon --no-satellite
 """
 
 import os, sys, time, logging, argparse
@@ -23,8 +22,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.settings import (IABG_RADARS, NOWCAST, MAPS_DIR,
-                              LOG_DIR, BASE_DIR, DOMAIN)
+from config.settings import IABG_RADARS, MAPS_DIR, LOG_DIR, BASE_DIR, DOMAIN
 
 
 def setup_logging(verbose=False):
@@ -51,8 +49,6 @@ def main():
                         help="без резервни радари (Истанбул за STS)")
     parser.add_argument("--no-satellite", action="store_true",
                         help="без H40B за зоните без радар (там ICON от +0)")
-    parser.add_argument("--lightning-sec", type=int, default=30,
-                        help="(не се ползва — остава за съвместимост с workflow-а)")
     parser.add_argument("--n-frames", type=int, default=5)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -133,10 +129,17 @@ def main():
     total_frames = sum(len(v) for v in all_frames.values())
     log.info(f"  Общо: {total_frames} frames от {len(all_frames)} източника")
 
-    # ── 3. МЪЛНИИ (MTG Lightning Imager) ──────────────────
+    # ── 3. H40B (паралелно, EUMETView е бавен) + МЪЛНИИ ──
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=1)
+    h40b_future = None
+    if not args.no_satellite:
+        from src.ingest.eumetview import fetch_h40b
+        h40b_future = pool.submit(fetch_h40b)
+
     # Отделните 5-мин кадри за ~40 мин назад: всеки от последните 3 композита
     # (на 10 мин) взима мълниите от своите 15 мин.
-    lightning, li_frames = [], []
+    li_frames = []
 
     if not args.no_lightning:
         log.info("── Фаза 2: Мълнии (MTG Lightning Imager) ──")
@@ -196,60 +199,56 @@ def main():
         log.error("ФАТАЛНО: Nowcast неуспешен!")
         sys.exit(1)
 
-    # ── 7. BLENDING ───────────────────────────────────────
-    if icon_data is not None:
-        log.info("── Фаза 5: Blending ──")
+    comp = forecast["last_composite"]
+    fc_times = forecast["timestamps"]
+    real_ts = round((fc_times[1] - fc_times[0]).total_seconds() / 60) if len(fc_times) >= 2 else 10
 
-    if icon_data is not None:
-        from src.blend.blending import blend_nowcast_icon
-        comp = forecast["last_composite"]
-        # Реален timestep от forecast timestamps
-        fc_times = forecast["timestamps"]
-        if len(fc_times) >= 2:
-            real_ts = round((fc_times[1] - fc_times[0]).total_seconds() / 60)
+    # ── 7. САТЕЛИТ H40B за зоната без радар (независимо от ICON) ──
+    from src.blend.satellite_fill import coverage_weight, SatelliteLayer, fill_nowcast_for_map
+    cov_w = coverage_weight(comp["dbz"])
+    sat_layer = None
+    if h40b_future is not None and float((cov_w < 1.0).mean()) > 0.01:
+        log.info("── Фаза 5a: Сателит H40B ──")
+        try:
+            h40b = h40b_future.result(timeout=240)
+            if h40b is not None:
+                sat_layer = SatelliteLayer(h40b, forecast["motion"], real_ts,
+                                           comp["lat"], comp["lon"])
+                if li_last is not None:
+                    from config.settings import LIGHTNING_BOOST
+                    sat_layer.apply_lightning(li_last, comp["timestamp"],
+                                              LIGHTNING_BOOST["sat_signal_mmh"])
+        except Exception as e:
+            log.warning(f"  H40B: {e}")
+        if sat_layer is not None:
+            fill_nowcast_for_map(forecast, cov_w, sat_layer)
         else:
-            real_ts = 5
-        # Покритие по пиксели + сателит H40B само ако има зона без радар
-        from src.blend.satellite_fill import coverage_weight, SatelliteLayer
-        cov_w = coverage_weight(comp["dbz"])
-        sat_layer = None
-        if float((cov_w < 1.0).mean()) > 0.01 and not args.no_satellite:
-            try:
-                from src.ingest.eumetview import fetch_h40b
-                h40b = fetch_h40b()
-                if h40b is not None and forecast.get("motion") is not None:
-                    sat_layer = SatelliteLayer(h40b, forecast["motion"], real_ts,
-                                               comp["lat"], comp["lon"])
-                    if li_last is not None:
-                        from config.settings import LIGHTNING_BOOST
-                        sat_layer.apply_lightning(li_last, comp["timestamp"],
-                                                  LIGHTNING_BOOST["sat_signal_mmh"])
-            except Exception as e:
-                log.warning(f"  H40B: {e}")
+            comp["sat_missing"] = True
+            log.warning("  H40B липсва — зоната без радар е празна на nowcast картата, ICON от +0 в blend-а")
+    pool.shutdown(wait=False)
 
+    # ── 8. BLENDING ───────────────────────────────────────
+    if icon_data is not None:
+        log.info("── Фаза 5b: Blending ──")
+        from src.blend.blending import blend_nowcast_icon
         blended, blend_times, actual_weights = blend_nowcast_icon(
-            forecast["forecast_dbz"], forecast["timestamps"],
-            icon_data, comp["lat"], comp["lon"],
-            timestep_min=real_ts, coverage_w=cov_w, sat_layer=sat_layer)
+            forecast["forecast_dbz"], fc_times, icon_data, comp["lat"], comp["lon"],
+            coverage_w=cov_w, sat_layer=sat_layer)
 
-    # ── 7. ВИЗУАЛИЗАЦИЯ ──────────────────────────────────
+    # ── 9. КАРТИ ─────────────────────────────────────────
     log.info("── Фаза 6: Карти ──")
     ts_str = dt.datetime.utcnow().strftime("%Y%m%d_%H%M")
     os.makedirs(MAPS_DIR, exist_ok=True)
 
     from src.output.visualize import plot_nowcast, plot_blended, generate_pages_data
 
-    nc_path = plot_nowcast(forecast,
-                           os.path.join(MAPS_DIR, f"nowcast_{ts_str}.png"),
-                           lightning)
-
-    # Стабилно име за GitHub Pages
-    plot_nowcast(forecast, os.path.join(MAPS_DIR, "nowcast_latest.png"), lightning)
+    plot_nowcast(forecast, os.path.join(MAPS_DIR, f"nowcast_{ts_str}.png"))
+    plot_nowcast(forecast, os.path.join(MAPS_DIR, "nowcast_latest.png"))   # стабилно име за Pages
 
     if blended is not None:
-        bl_path = plot_blended(blended, blend_times, forecast["last_composite"],
-                               output_path=os.path.join(MAPS_DIR, f"blended_{ts_str}.png"),
-                               actual_weights=actual_weights)
+        plot_blended(blended, blend_times, forecast["last_composite"],
+                     output_path=os.path.join(MAPS_DIR, f"blended_{ts_str}.png"),
+                     actual_weights=actual_weights)
         plot_blended(blended, blend_times, forecast["last_composite"],
                      output_path=os.path.join(MAPS_DIR, "blended_latest.png"),
                      actual_weights=actual_weights)
@@ -265,7 +264,7 @@ def main():
         src = os.path.join(MAPS_DIR, fname)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(pages_maps, fname))
-    log.info(f"Pages обновени: docs/maps/")
+    log.info("Pages обновени: docs/maps/")
     elapsed = time.time() - t0
     log.info("=" * 60)
     log.info(f"ГОТОВО за {elapsed:.1f} сек")

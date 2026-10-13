@@ -10,7 +10,7 @@ import numpy as np
 import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import DOMAIN, NOWCAST, MAPS_DIR
+from config.settings import DOMAIN, MAPS_DIR
 
 logger = logging.getLogger("output")
 
@@ -64,17 +64,25 @@ def _setup_cmap():
     return cmap, norm
 
 def _mov_text(comp):
-    """Текст за движението в заглавието на картата (SIGMET стил)."""
+    """Движението в заглавието: по региони (север/ЮИ/ЮЗ) и откъде е всяко."""
     mi = comp.get("motion_info")
     if not mi:
         return ""
+    regs = mi.get("regions")
+    if regs:
+        lab = {"север": "С", "ЮИ": "ЮИ", "ЮЗ": "ЮЗ"}
+        parts = []
+        for r in regs:
+            mv = "STNR" if r["dir_txt"] == "STNR" else f"{r['dir_txt']} {r['kt']:.0f}KT"
+            parts.append(f"{lab.get(r['name'], r['name'])}: {mv}"
+                         + (" (ICON)" if r["src"] == "ICON" else ""))
+        return "   |   MOV  " + "  ·  ".join(parts)
     if mi["dir_txt"] == "STNR":
         return "   |   STNR"
-    src = " [ICON 700 hPa]" if str(mi.get("source", "")).startswith("ICON") else ""
-    return f"   |   MOV {mi['dir_txt']} {mi['kt']:.0f}KT ({mi['kmh']:.0f} km/h){src}"
+    return f"   |   MOV {mi['dir_txt']} {mi['kt']:.0f}KT ({mi['kmh']:.0f} km/h)"
 
 
-def plot_nowcast(forecast, output_path=None, lightning=None):
+def plot_nowcast(forecast, output_path=None):
     """Карта: наблюдение + S-PROG прогнози (до 60 мин)."""
     import matplotlib
     matplotlib.use("Agg")
@@ -86,21 +94,19 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     except ImportError:
         HAS_CARTOPY = False
 
-    fc_dbz = forecast["forecast_dbz"]
+    fc_dbz = forecast.get("forecast_dbz_plot", forecast["forecast_dbz"])   # с H40B без радар
     fc_times = forecast["timestamps"]
     comp = forecast["last_composite"]
     cmap, norm = _setup_cmap()
 
-        # Показвай панели на +5, +15, +30, +45, +60 мин (реални минути)
+    # Панели около +5, +15, +30, +45, +60 мин (реални минути, по стъпката на S-PROG)
     target_mins = [5, 15, 30, 45, 60]
     if len(fc_times) >= 2:
         ts_min = (fc_times[1] - fc_times[0]).total_seconds() / 60
     else:
         ts_min = 5
     steps = [max(0, round(m / ts_min) - 1) for m in target_mins]
-    steps = [s for s in steps if s < fc_dbz.shape[0]]
-    steps = list(dict.fromkeys(steps))  # без дубликати
-    steps = [s for s in steps if s < fc_dbz.shape[0]]
+    steps = list(dict.fromkeys(s for s in steps if s < fc_dbz.shape[0]))   # без дубликати
     n_panels = 1 + len(steps)
     ncols = min(4, n_panels)
     nrows = (n_panels + ncols - 1) // ncols
@@ -121,7 +127,8 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     # Panel 0: OBS
     ax = axes[0]
     _setup_ax(ax)
-    raw = comp.get("dbz_radar", comp["dbz"])          # OBS = радарът, без усилването от LI
+    # OBS = радарът без усилването от LI (+ H40B в зоната без радар, ако го има)
+    raw = comp.get("dbz_obs_plot", comp.get("dbz_radar", comp["dbz"]))
     obs = np.ma.masked_where(np.isnan(raw) | (raw < 5), raw)
     tr = ccrs.PlateCarree() if HAS_CARTOPY else None
     ax.pcolormesh(comp["lon"], comp["lat"], obs, cmap=cmap, norm=norm, transform=tr)
@@ -132,13 +139,10 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
         if (li >= 5).any():
             ax.contour(comp["lon"], comp["lat"], (li >= 5).astype(float), levels=[0.5],
                        colors="magenta", linewidths=0.9, transform=tr, zorder=12)
-    if lightning:
-        ll = [s["lat"] for s in lightning]
-        lo = [s["lon"] for s in lightning]
-        ax.scatter(lo, ll, s=3, c='yellow', marker='+', alpha=0.7, zorder=10,
-                   transform=tr)
     sources = comp.get("sources", [])
     ax.set_title(f"OBS {comp['timestamp'].strftime('%H:%M')} UTC"
+                 + ("  + H40B" if comp.get("sat_on_map") else "")
+                 + ("  (H40B липсва)" if comp.get("sat_missing") else "")
                  + ("  (контур: мълнии 15 мин)" if li is not None and (li >= 1).any() else "") + "\n"
                  f"{', '.join(sources)}", fontsize=9)
 
@@ -148,8 +152,7 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
         _setup_ax(ax)
         fc = np.ma.masked_where(np.isnan(fc_dbz[step]) | (fc_dbz[step] < 5),
                                 fc_dbz[step])
-        pm = ax.pcolormesh(comp["lon"], comp["lat"], fc, cmap=cmap, norm=norm,
-                           transform=tr)
+        ax.pcolormesh(comp["lon"], comp["lat"], fc, cmap=cmap, norm=norm, transform=tr)
         real_mins = round((fc_times[step] - comp["timestamp"]).total_seconds() / 60)
         ax.set_title(f"+{real_mins} min  {fc_times[step].strftime('%H:%M')} UTC",
                      fontsize=9)
@@ -162,7 +165,8 @@ def plot_nowcast(forecast, output_path=None, lightning=None):
     plt.suptitle(f'NOWCASTING PUBLIC — S-PROG{_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
-    _add_credits(fig, comp, ["мълнии: EUMETSAT MTG LI"])
+    _add_credits(fig, comp, (["сателит: EUMETSAT / H SAF H40B"] if comp.get("sat_on_map") else [])
+                 + ["мълнии: EUMETSAT MTG LI"])
 
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "nowcast.png")
@@ -186,7 +190,7 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
 
     cmap, norm = _setup_cmap()
 
-    # Покажи: +30, +60, +120, +180, +240, +360 мин
+    # Панели: +30, +60, +120, +180, +240, +300 мин
     show_minutes = [30, 60, 120, 180, 240, 300]
     ts_min = 5
     show_steps = [m // ts_min - 1 for m in show_minutes]
@@ -230,8 +234,8 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
     plt.suptitle(f'BLENDED FORECAST — Radar + ICON-EU (0–6h){_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
-    _add_credits(fig, comp, ["сателит: EUMETSAT / H SAF H40B",
-                             "модел: DWD ICON-EU"])
+    _add_credits(fig, comp, (["сателит: EUMETSAT / H SAF H40B"] if comp.get("sat_on_map") else [])
+                 + ["модел: DWD ICON-EU"])
 
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "blended.png")
@@ -263,7 +267,7 @@ def generate_pages_data(comp, forecast, blended_dbz, blend_times,
         "generated_utc": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "observation_time": comp["timestamp"].strftime("%Y-%m-%dT%H:%M:%SZ"),
         "sources": comp.get("sources", []),
-        "nowcast_minutes": NOWCAST["n_leadtimes"] * NOWCAST["timestep_min"],
+        "nowcast_minutes": 60,          # nowcast картата показва до +60 мин
         "blend_hours": 6,
         "domain": DOMAIN,
         "credits": _credit_links(comp),

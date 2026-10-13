@@ -1,8 +1,8 @@
 """
 Ingest: EUMETSAT EUMETView (WCS, без регистрация)
 =================================================
-  H40B   (mtg_fd__h40b)   — валеж от MTG FCI + LEO MW, mm/h, на 10 мин, ~25 мин закъснение
-  LI AFA (mtg_fd__li_afa) — мълнии от MTG Lightning Imager, на 5 мин, ~10 мин закъснение
+  H40B   (mtg_fd__h40b)   — валеж от MTG FCI + LEO MW, mm/h, на 10 мин, ~20–30 мин закъснение
+  LI AFA (mtg_fd__li_afa) — мълнии от MTG Lightning Imager, на 5 мин, ~10–14 мин закъснение
                             (WCS дава оцветена картинка; броят светкавици за 5 мин
                              се извлича от зеления канал на палитрата 1 → 20+)
 Сървър: https://view.eumetsat.int/geoserver/  (Fees: none, AccessConstraints: none)
@@ -18,12 +18,11 @@ logger = logging.getLogger("ingest.eumetview")
 WCS = "https://view.eumetsat.int/geoserver/wcs"
 BBOX_LAT = (40.0, 45.0)      # малко по-широко от домейна — за адвекция отвън
 BBOX_LON = (20.5, 30.0)
-_session = requests.Session()
 
 
-def _latest_time(cov: str) -> dt.datetime:
-    r = _session.get(WCS, params=dict(service="WCS", version="2.0.1",
-                     request="DescribeCoverage", coverageId=cov), timeout=60)
+def _latest_time(cov: str, timeout: float = 90) -> dt.datetime:
+    r = requests.get(WCS, params=dict(service="WCS", version="2.0.1",
+                     request="DescribeCoverage", coverageId=cov), timeout=timeout)
     r.raise_for_status()
     end = re.search(r"<gml:endPosition>([^<]+)</gml:endPosition>", r.text).group(1)
     return dt.datetime.fromisoformat(end.replace("Z", "+00:00"))
@@ -70,18 +69,27 @@ def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120):
     return arr, lat.astype(np.float64), lon.astype(np.float64)
 
 
-def fetch_h40b(now: dt.datetime = None, max_age_min: float = 45) -> dict | None:
-    """Последният кадър H40B: валеж mm/h (NaN = няма данни), качество %."""
+def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60) -> dict | None:
+    """Последният кадър H40B: валеж mm/h (NaN = няма данни), качество %.
+    Два опита — EUMETView понякога отговаря бавно или връща грешка."""
+    import time
     now = now or dt.datetime.now(dt.timezone.utc)
-    try:
-        t = _latest_time("mtg_fd__h40b")
-        age = (now - t).total_seconds() / 60
-        if age > max_age_min:
-            logger.warning(f"H40B: последният кадър {t:%H:%M} UTC е стар ({age:.0f} мин)")
-            return None
-        arr, lat, lon = _get_coverage("mtg_fd__h40b", t)
-    except Exception as e:
-        logger.warning(f"H40B недостъпен: {e}")
+    last_err = None
+    for attempt in (1, 2):
+        try:
+            t = _latest_time("mtg_fd__h40b")
+            age = (now - t).total_seconds() / 60
+            if age > max_age_min:
+                logger.warning(f"H40B: последният кадър {t:%H:%M} UTC е стар ({age:.0f} мин) — не се ползва")
+                return None
+            arr, lat, lon = _get_coverage("mtg_fd__h40b", t)
+            break
+        except Exception as e:
+            last_err = e
+            if attempt == 1:
+                time.sleep(3)
+    else:
+        logger.warning(f"H40B недостъпен след 2 опита: {str(last_err)[:120]}")
         return None
 
     rain = arr[0]
@@ -153,51 +161,6 @@ def fetch_li_frames(now: dt.datetime = None, back_min: float = 40,
     return frames
 
 
-def fetch_li_afa(now: dt.datetime = None, n_frames: int = 3,
-                 max_age_min: float = 30) -> dict | None:
-    """
-    Мълнии от MTG LI: максимумът на брой светкавици/5 мин от последните n_frames кадъра
-    (3 кадъра = последните 15 мин). Кадър, който не мине и след повторен опит, се пропуска.
-    """
-    import time
-    now = now or dt.datetime.now(dt.timezone.utc)
-    try:
-        t_last = _latest_time("mtg_fd__li_afa")
-    except Exception as e:
-        logger.warning(f"LI AFA недостъпен: {e}")
-        return None
-    age = (now - t_last).total_seconds() / 60
-    if age > max_age_min:
-        logger.warning(f"LI AFA: последният кадър {t_last:%H:%M} UTC е стар ({age:.0f} мин)")
-        return None
-
-    count, lat, lon, got = None, None, None, []
-    for k in range(n_frames):
-        t = t_last - dt.timedelta(minutes=5 * k)
-        for attempt in (1, 2):
-            try:
-                rgb, lat, lon = _get_coverage("mtg_fd__li_afa", t)
-                c = _afa_count(rgb)
-                count = c if count is None else np.maximum(count, c)
-                got.append(f"{t:%H:%M}")
-                break
-            except Exception as e:
-                if attempt == 1:
-                    time.sleep(2)
-                else:
-                    logger.warning(f"LI AFA {t:%H:%M}: пропуснат ({str(e)[:60]})")
-
-    if count is None:
-        logger.warning("LI AFA: нито един кадър не мина")
-        return None
-
-    n_px = int((count > 0).sum())
-    logger.info(f"LI AFA: {t_last:%H:%M} UTC (закъснение {age:.0f} мин), "
-                f"кадри {', '.join(got)}: мълнии в {n_px} px, "
-                f"max {count.max():.0f} светкавици/5 мин")
-    return {"time": t_last, "count": count, "lat": lat, "lon": lon,
-            "source": "eumetsat_li_afa"}
-
 def regrid(field, lat, lon, target_lat, target_lon, method="nearest"):
     """Прехвърля поле от решетката на EUMETView към целевата решетка."""
     from scipy.interpolate import RegularGridInterpolator
@@ -210,11 +173,5 @@ def regrid(field, lat, lon, target_lat, target_lon, method="nearest"):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
-    h = fetch_h40b()
-    li = fetch_li_afa()
-    # Проверка и на кадъра с мълнии от сутринта
-    t_test = dt.datetime(2026, 10, 12, 3, 25, tzinfo=dt.timezone.utc)
-    rgb, lat, lon = _get_coverage("mtg_fd__li_afa", t_test)
-    c = _afa_count(rgb)
-    print(f"Тест 03:25 UTC: мълнии в {int((c > 0).sum())} px, "
-          f"max {c.max():.0f}, медиана {np.median(c[c > 0]):.1f} светкавици/5 мин")
+    fetch_h40b()
+    fetch_li_frames(back_min=15)

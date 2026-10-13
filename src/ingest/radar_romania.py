@@ -11,7 +11,7 @@ import datetime as dt
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import ROMANIA, ROMANIA_DIR, DOMAIN
+from config.settings import ROMANIA, ROMANIA_DIR
 
 logger = logging.getLogger("ingest.romania")
 
@@ -43,8 +43,6 @@ def read_romania_composite(filepath: str) -> dict | None:
         projdef = where['projdef'].decode() if isinstance(where['projdef'], bytes) else str(where['projdef'])
         xsize  = int(where['xsize'])
         ysize  = int(where['ysize'])
-        xscale = float(where['xscale'])
-        yscale = float(where['yscale'])
 
         ll_lat = float(where['LL_lat'])
         ll_lon = float(where['LL_lon'])
@@ -110,7 +108,6 @@ def download_romania_composite() -> str | None:
     Връща локалния път или None.
     """
     import requests
-    from bs4 import BeautifulSoup
 
     url = ROMANIA["base_url"]
     logger.info(f"Сваляне от {url}")
