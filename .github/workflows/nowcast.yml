@@ -1,10 +1,17 @@
 name: Nowcasting Public
 
 on:
+  # Основно: външен будилник (cron-job.org) вика workflow_dispatch на 10 мин —
+  # GitHub schedule-ът е ненадежден (12–13.10: 4–5 пуска на ден вместо 28).
   workflow_dispatch:
   schedule:
-    # :06 и :36 — малко след RO (излиза ~5 мин след слота), H40B и LI са вече налични
-    - cron: '6,36 4-18 * * *'
+    # Резерв, ако външният будилник спре. :06/:16/… — малко след RO.
+    - cron: '6-59/10 3-18 * * *'
+
+# Пуск не започва, докато предишният не свърши (иначе push-овете се бият)
+concurrency:
+  group: nowcast
+  cancel-in-progress: false
 
 permissions:
   contents: write
