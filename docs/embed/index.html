@@ -175,8 +175,8 @@ async function load() {
   const age = Math.round((Date.now() - Date.parse(meta.observation_utc)) / 60000);
   const fr = document.getElementById('fresh');
   fr.textContent = `преди ${age} мин`;
-  fr.className = 'fresh' + (age > 40 ? ' old' : '');
-  if (age > 40) fr.textContent += ' — данните са стари';
+  fr.className = 'fresh' + (age > 50 ? ' old' : '');
+  if (age > 50) fr.textContent += ' — данните са стари';
 
   const sl = document.getElementById('slider');
   sl.max = meta.frames.length - 1; sl.oninput = e => show(+e.target.value);
