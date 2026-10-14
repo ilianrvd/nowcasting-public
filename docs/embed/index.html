@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nowcast — валежи и гръмотевици</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2733; --muted: #66727f; --line: #e3e7ec;
+    --green: #2e9e44; --yellow: #e8b500; --red: #d7301f; --accent: #1f6fb2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--fg); background: var(--bg); font-size: 15px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 10px 12px 20px; }
+  h1 { font-size: 1.15rem; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: .85rem; }
+  .fresh { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .8rem;
+           background: #eaf5ec; color: var(--green); margin-left: 6px; }
+  .fresh.old { background: #fdecea; color: var(--red); }
+  #map { height: 58vh; min-height: 340px; max-height: 640px; border-radius: 8px; border: 1px solid var(--line); margin-top: 8px; }
+  @media (max-width: 600px) { #map { height: auto; aspect-ratio: 4 / 3; min-height: 300px; } }
+  .controls { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; flex-wrap: wrap; }
+  .controls button { border: 1px solid var(--line); background: #f6f8fa; border-radius: 8px;
+                     padding: 6px 12px; font-size: 1rem; cursor: pointer; }
+  .controls input[type=range] { flex: 1; min-width: 180px; accent-color: var(--accent); }
+  #tlabel { font-weight: 600; min-width: 210px; }
+  #tlabel small { font-weight: 400; color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .82rem; color: var(--muted); margin: 6px 0; }
+  .legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .motion { font-size: .85rem; color: var(--muted); margin: 2px 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  td:first-child { cursor: pointer; }
+  td:first-child small { color: var(--muted); }
+  .dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; }
+  .green { background: var(--green); } .yellow { background: var(--yellow); } .red { background: var(--red); }
+  .na { background: #cfd5db; }
+  .filters { margin: 14px 0 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .filters button { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 3px 10px; font-size: .82rem; cursor: pointer; }
+  .filters button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .note { font-size: .78rem; color: var(--muted); margin-top: 14px; line-height: 1.45; }
+  .note a { color: var(--muted); }
+  .ltg { font-size: 15px; line-height: 15px; text-shadow: 0 0 3px #fff; }
+  .site-pin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 2px #0008; }
+  @media (max-width: 600px) { #tlabel { min-width: 0; width: 100%; } th, td { padding: 4px 3px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Валежи и гръмотевици — следващите 6 часа</h1>
+  <div class="sub">Наблюдение <b id="obs">—</b> <span id="fresh" class="fresh">—</span></div>
+
+  <div id="map"></div>
+
+  <div class="controls">
+    <button id="play" aria-label="Пусни">▶</button>
+    <input id="slider" type="range" min="0" max="0" value="0" step="1">
+    <div id="tlabel">—</div>
+  </div>
+  <div class="legend">
+    <span><i style="background:#3C9BE6"></i>слаб дъжд</span>
+    <span><i style="background:#00C800"></i>умерен</span>
+    <span><i style="background:#FFFF00"></i>силен</span>
+    <span><i style="background:#FF0000"></i>много силен / градушка</span>
+    <span>⚡ мълнии (последните 15 мин)</span>
+  </div>
+  <div class="motion" id="motion"></div>
+
+  <h2 style="font-size:1rem;margin:16px 0 0">Стартове</h2>
+  <div class="sub"><span class="dot green"></span> чисто &nbsp;
+    <span class="dot yellow"></span> дъжд до <span id="rr">10</span> km &nbsp;
+    <span class="dot red"></span> гръмотевична клетка до <span id="rc">20</span> km</div>
+  <div class="filters" id="filters"></div>
+  <table id="sites"><thead></thead><tbody></tbody></table>
+
+  <div class="note">
+    Информативен продукт, <b>не е официална прогноза</b>. До +1 ч прогнозата е по радар и сателит,
+    след това постепенно по модела ICON — точността намалява с времето. Решението за полет е на пилота.<br>
+    Данни: <span id="credits">—</span>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const DATA = 'data/';
+const COLORS = { green: '#2e9e44', yellow: '#e8b500', red: '#d7301f', null: '#cfd5db' };
+let meta, sites, overlay, ltgLayer, siteLayer, idx = 0, timer = null, region = 'всички';
+
+const map = L.map('map', { zoomControl: true, attributionControl: true });
+map.fitBounds([[41.25, 22.35], [44.2, 28.6]]);
+window.addEventListener('resize', () => map.invalidateSize());
+// Блед фон (Esri Light Gray) + релеф + надписи отгоре — без API ключ
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+L.tileLayer(ESRI + 'Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+  { attribution: 'Подложка © Esri, HERE, Garmin, © OpenStreetMap', maxZoom: 13 }).addTo(map);
+L.tileLayer(ESRI + 'Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',
+  { attribution: 'Релеф © Esri', opacity: 0.35, maxZoom: 13 }).addTo(map);
+map.createPane('labels'); map.getPane('labels').style.zIndex = 650; map.getPane('labels').style.pointerEvents = 'none';
+L.tileLayer(ESRI + 'Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+  { pane: 'labels', maxZoom: 13 }).addTo(map);
+
+function leadText(m) { return m === 0 ? 'сега' : '+' + (m < 60 ? m + ' мин' : (m / 60).toFixed(m % 60 ? 1 : 0) + ' ч'); }
+
+function nearestSiteLead(m) {           // за цвета на точките на картата
+  const L_ = sites ? sites.leads_min : [0];
+  let k = 0; L_.forEach((v, i) => { if (Math.abs(v - m) < Math.abs(L_[k] - m)) k = i; });
+  return k;
+}
+
+function show(i) {
+  idx = i;
+  const f = meta.frames[i];
+  const url = DATA + f.file + '?' + meta.generated_utc;
+  if (!overlay) overlay = L.imageOverlay(url, meta.bounds, { opacity: 0.85 }).addTo(map);
+  else overlay.setUrl(url);
+  document.getElementById('slider').value = i;
+  document.getElementById('tlabel').innerHTML =
+    `${f.time_local} <small>(${leadText(f.lead_min)}) · ${f.source}</small>`;
+  if (ltgLayer) { f.lead_min === 0 ? ltgLayer.addTo(map) : ltgLayer.remove(); }
+  drawSites(nearestSiteLead(f.lead_min));
+}
+
+function drawSites(k) {
+  if (!sites) return;
+  if (siteLayer) siteLayer.remove();
+  siteLayer = L.layerGroup(sites.sites.map(s => {
+    const st = s.status[k];
+    const icon = L.divIcon({ className: '', html: `<div class="site-pin" style="background:${COLORS[st]}"></div>`, iconSize: [12, 12] });
+    return L.marker([s.lat, s.lon], { icon, title: s.name })
+      .bindPopup(`<b>${s.name}</b><br>посоки: ${s.dirs || '—'} · ${s.type || ''}` +
+                 (s.acc === '?' ? '<br><i>координатите са приблизителни</i>' : ''));
+  })).addTo(map);
+}
+
+function drawTable() {
+  const head = document.querySelector('#sites thead'), body = document.querySelector('#sites tbody');
+  head.innerHTML = '<tr><th>Старт</th>' + sites.leads_local.map((t, i) =>
+    `<th>${i === 0 ? 'сега' : t}</th>`).join('') + '</tr>';
+  const rank = s => s.status.slice(0, 4).includes('red') ? 0 : s.status.slice(0, 4).includes('yellow') ? 1 : 2;
+  const rows = sites.sites.filter(s => region === 'всички' || s.region === region)
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'bg'));
+  body.innerHTML = rows.map(s => `<tr><td data-lat="${s.lat}" data-lon="${s.lon}">${s.name}` +
+      ` <small>${s.dirs || ''}</small></td>` +
+      s.status.map(st => `<td><span class="dot ${st || 'na'}"></span></td>`).join('') + '</tr>').join('');
+  body.querySelectorAll('td[data-lat]').forEach(td => td.onclick = () => {
+    map.setView([+td.dataset.lat, +td.dataset.lon], 10);
+    document.getElementById('map').scrollIntoView({ behavior: 'smooth' });
+  });
+}
+
+function drawFilters() {
+  const regs = ['всички', ...new Set(sites.sites.map(s => s.region))];
+  const names = { 'СЗ': 'Северозапад', 'З': 'Запад', 'ЮЗ': 'Югозапад', 'Ц': 'Централна',
+                  'СИ': 'Североизток', 'ЮИ': 'Югоизток', 'ИР': 'Източни Родопи' };
+  const box = document.getElementById('filters');
+  box.innerHTML = regs.map(r => `<button data-r="${r}" class="${r === region ? 'on' : ''}">${names[r] || r}</button>`).join('');
+  box.querySelectorAll('button').forEach(b => b.onclick = () => { region = b.dataset.r; drawFilters(); drawTable(); });
+}
+
+function play() {
+  const btn = document.getElementById('play');
+  if (timer) { clearInterval(timer); timer = null; btn.textContent = '▶'; return; }
+  btn.textContent = '⏸';
+  timer = setInterval(() => show((idx + 1) % meta.frames.length), 900);
+}
+
+async function load() {
+  meta = await (await fetch(DATA + 'frames.json?' + Date.now())).json();
+  try { sites = await (await fetch(DATA + 'sites.json?' + Date.now())).json(); } catch (e) { sites = null; }
+
+  document.getElementById('obs').textContent = meta.observation_local;
+  const age = Math.round((Date.now() - Date.parse(meta.observation_utc)) / 60000);
+  const fr = document.getElementById('fresh');
+  fr.textContent = `преди ${age} мин`;
+  fr.className = 'fresh' + (age > 40 ? ' old' : '');
+  if (age > 40) fr.textContent += ' — данните са стари';
+
+  const sl = document.getElementById('slider');
+  sl.max = meta.frames.length - 1; sl.oninput = e => show(+e.target.value);
+  document.getElementById('play').onclick = play;
+
+  ltgLayer = L.layerGroup(meta.lightning.map(p => L.marker([p[0], p[1]], {
+    icon: L.divIcon({ className: 'ltg', html: '⚡', iconSize: [14, 14] }), interactive: false })));
+
+  document.getElementById('motion').textContent = meta.motion.length ?
+    'Движение: ' + meta.motion.map(m => `${m.region} → ${m.dir} ${m.kmh} km/h`).join(' · ') : '';
+
+  if (sites) {
+    document.getElementById('rr').textContent = sites.radius_rain_km;
+    document.getElementById('rc').textContent = sites.radius_conv_km;
+    drawFilters(); drawTable();
+  }
+  show(idx);
+
+  try {
+    const m = await (await fetch('../maps/meta.json?' + Date.now())).json();
+    if (m.credits) document.getElementById('credits').innerHTML = m.credits
+      .map(c => `<a href="${c.url}" target="_blank" rel="noopener">${c.name}</a>`).join(' · ');
+  } catch (e) {}
+}
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>

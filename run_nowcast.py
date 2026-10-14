@@ -259,6 +259,13 @@ def main():
     generate_pages_data(forecast["last_composite"], forecast,
                         blended, blend_times)
 
+    # Публичната страница (docs/embed/): кадри за Leaflet + таблица за стартовете
+    try:
+        from src.output.web_export import export_web
+        export_web(forecast, blended, blend_times)
+    except Exception as e:
+        log.warning(f"  Web експорт: {e}")
+
     # Копирай картите в docs/ за GitHub Pages
     import shutil
     pages_maps = os.path.join(BASE_DIR, "docs", "maps")

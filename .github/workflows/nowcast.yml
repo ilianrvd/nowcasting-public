@@ -53,7 +53,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/maps/
+          git add -A docs/maps/ docs/embed/
           git add -f data/output/maps/nowcast_latest.png data/output/maps/blended_latest.png data/output/maps/meta.json
           git diff --staged --quiet || git commit -m "Nowcast $(date -u +'%Y-%m-%d %H:%M') UTC"
           git pull --rebase -X theirs || true   # ако междувременно е качен код
