@@ -190,7 +190,7 @@ def main():
                 log.warning(f"  ICON Open-Meteo: {e}")
 
     # ── 6. S-PROG ─────────────────────────────────────────
-    log.info("── Фаза 4: S-PROG Nowcast ──")
+    log.info("── Фаза 4: Nowcast (ANVIL / S-PROG) ──")
     from src.nowcast.nowcasting import run_sprog
     forecast = run_sprog(composites,
                          wind700=icon_data.get("wind700") if icon_data else None)
@@ -205,7 +205,8 @@ def main():
 
     # ── 7. САТЕЛИТ H40B за зоната без радар (независимо от ICON) ──
     from src.blend.satellite_fill import coverage_weight, SatelliteLayer, fill_nowcast_for_map
-    cov_w = coverage_weight(comp["dbz"])
+    from config.settings import SATELLITE
+    cov_w = coverage_weight(comp["dbz"], ramp_px=SATELLITE["ramp_px"])
     sat_layer = None
     if h40b_future is not None and float((cov_w < 1.0).mean()) > 0.01:
         log.info("── Фаза 5a: Сателит H40B ──")
@@ -213,7 +214,8 @@ def main():
             h40b = h40b_future.result(timeout=240)
             if h40b is not None:
                 sat_layer = SatelliteLayer(h40b, forecast["motion"], real_ts,
-                                           comp["lat"], comp["lon"])
+                                           comp["lat"], comp["lon"],
+                                           min_rate=SATELLITE["min_rate_mmh"])
                 if li_last is not None:
                     from config.settings import LIGHTNING_BOOST
                     sat_layer.apply_lightning(li_last, comp["timestamp"],

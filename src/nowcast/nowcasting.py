@@ -1,7 +1,10 @@
 """
-Nowcast: S-PROG екстраполация
-==============================
+Nowcast: ANVIL (основен) / S-PROG (резерв)
+==========================================
 Optical flow (Lucas-Kanade) + каскадно разлагане + semi-Lagrangian екстраполация.
+ANVIL (Pulkkinen et al. 2020) — локален ARI(p,1) по каскадните нива: пази
+малките конвективни ядра и тенденцията растеж/разпад. Иска p+2 кадъра;
+при по-малко (или грешка) → S-PROG. Изборът: settings.NOWCAST["method"].
 
 Входът е хомогенна серия от composite.py на равномерна ос (10 мин).
 Timestep-ът е реалният интервал между кадрите — S-PROG и LK приемат,
@@ -22,6 +25,7 @@ from config.settings import NOWCAST, DOMAIN
 logger = logging.getLogger("nowcast")
 
 HORIZON_MIN = 150        # радарен хоризонт на прогнозата
+R_MAX = (10 ** (70 / 10) / 200) ** (1 / 1.6)   # 70 dBZ — таван за ANVIL
 
 
 def dbz_to_r(dbz, a=200.0, b=1.6):
@@ -246,7 +250,7 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None, wind700=None)
     if n_leadtimes is None:
         n_leadtimes = max(1, HORIZON_MIN // ts)
 
-    logger.info(f"S-PROG: интервали {[round(d, 1) for d in dts]} мин → "
+    logger.info(f"Nowcast: интервали {[round(d, 1) for d in dts]} мин → "
                 f"{n_leadtimes}×{ts} мин = {n_leadtimes * ts} мин")
 
     V = compute_motion(composites)
@@ -275,17 +279,42 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None, wind700=None)
     R = dbz_to_r(np.stack(frames))
     R[R < 0.1] = 0.0
 
-    try:
-        from pysteps.nowcasts.sprog import forecast as sprog_fc
-        from pysteps.utils.transformation import dB_transform
-        R_log, _ = dB_transform(R, threshold=0.1, zerovalue=-15.0)
-        R_fc = sprog_fc(R_log[-3:], V, n_leadtimes,
-                        n_cascade_levels=n_cascade_levels,
-                        precip_thr=-10.0)
-        R_fc, _ = dB_transform(R_fc, inverse=True)
-    except Exception as e:
-        logger.warning(f"S-PROG: {e} — semilagrangian fallback")
-        R_fc = extrapolate(R[-1], V, n_leadtimes)
+    method = NOWCAST.get("method", "sprog")
+    ac = NOWCAST.get("anvil", {})
+    need = ac.get("ar_order", 2) + 2                    # ANVIL (ARI) иска p+2 кадъра
+    if method == "anvil" and len(composites) < need:
+        logger.warning(f"ANVIL иска поне {need} кадъра, има {len(composites)} — S-PROG")
+        method = "sprog"
+
+    R_fc = None
+    if method == "anvil":
+        try:
+            from pysteps.nowcasts.anvil import forecast as anvil_fc
+            logger.info(f"ANVIL: {len(composites)} кадъра, локален AR в радиус "
+                        f"{ac.get('ar_window_radius', 25)} px")
+            R_fc = anvil_fc(R[-need:], V, n_leadtimes,
+                            n_cascade_levels=n_cascade_levels,
+                            ar_order=ac.get("ar_order", 2),
+                            ar_window_radius=ac.get("ar_window_radius", 25),
+                            num_workers=ac.get("num_workers", 1))
+            R_fc = np.clip(np.nan_to_num(R_fc, nan=0.0), 0.0, R_MAX)
+        except Exception as e:
+            logger.warning(f"ANVIL: {e} — S-PROG")
+            method, R_fc = "sprog", None
+
+    if R_fc is None:
+        try:
+            from pysteps.nowcasts.sprog import forecast as sprog_fc
+            from pysteps.utils.transformation import dB_transform
+            R_log, _ = dB_transform(R, threshold=0.1, zerovalue=-15.0)
+            R_fc = sprog_fc(R_log[-3:], V, n_leadtimes,
+                            n_cascade_levels=n_cascade_levels,
+                            precip_thr=-10.0)
+            R_fc, _ = dB_transform(R_fc, inverse=True)
+        except Exception as e:
+            logger.warning(f"S-PROG: {e} — semilagrangian fallback")
+            method = "extrapolation"
+            R_fc = extrapolate(R[-1], V, n_leadtimes)
 
     fc_dbz = r_to_dbz(np.clip(R_fc, 0.01, None))
     fc_dbz[R_fc < 0.1] = np.nan
@@ -297,4 +326,5 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None, wind700=None)
         "timestamps": fc_times,
         "motion": V,
         "last_composite": composites[-1],
+        "method": {"anvil": "ANVIL", "sprog": "S-PROG"}.get(method, "екстраполация"),
     }

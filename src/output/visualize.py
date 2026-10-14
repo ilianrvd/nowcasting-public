@@ -162,7 +162,7 @@ def plot_nowcast(forecast, output_path=None):
 
     plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
                  ax=axes[:n_panels], label='dBZ', shrink=0.6, pad=0.02)
-    plt.suptitle(f'NOWCASTING PUBLIC — S-PROG{_mov_text(comp)}',
+    plt.suptitle(f'NOWCASTING PUBLIC — {forecast.get("method", "S-PROG")}{_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
     _add_credits(fig, comp, (["сателит: EUMETSAT / H SAF H40B"] if comp.get("sat_on_map") else [])
