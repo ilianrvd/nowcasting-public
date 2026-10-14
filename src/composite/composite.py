@@ -134,6 +134,9 @@ def create_composite(frames, ref_time, target_lat, target_lon):
     }
 
 
+MIN_SERIES = 4          # ANVIL иска 4 кадъра; под това се пробва без резервите
+
+
 def _latest(frames):
     return max(f["timestamp"] for f in frames)
 
@@ -184,30 +187,54 @@ def create_composite_series(all_frames_by_source: dict,
             logger.info(f"  {src}: резерв за {cfg['backup_for']} (основният липсва/застоял)")
     logger.info(f"Ос: {anchor:%H:%M} UTC, активни: {', '.join(active)}")
 
-    # Назад по марките; спираме при първия непълен кадър след началото на серията
     target_lat, target_lon = make_target_grid()
+
+    def build(srcs, log=True):
+        """Назад по марките; спира при първия непълен кадър след началото на серията.
+        Връща [(T, chosen)] от най-новия назад — без да смята composite."""
+        series = []
+        for k in range(n_composites + 3):
+            T = anchor - dt.timedelta(minutes=GRID_STEP_MIN * k)
+            chosen, missing = [], []
+            for src, frames in srcs.items():
+                best = min(frames, key=lambda f: abs((f["timestamp"] - T).total_seconds()))
+                tol = TOL_SEC.get(src, TOL_SEC_DEFAULT)
+                if abs((best["timestamp"] - T).total_seconds()) <= tol:
+                    chosen.append(best)
+                else:
+                    missing.append(src)
+            if missing:
+                if log:
+                    logger.info(f"  Кадър {T:%H:%M}: липсва {', '.join(missing)} — изхвърлен")
+                if series:
+                    break          # серията трябва да е непрекъсната
+                continue
+            series.append((T, chosen))
+            if len(series) == n_composites:
+                break
+        return series
+
+    series = build(active)
+    # Твърде къса серия (ANVIL иска 4 кадъра) — обикновено заради резервен радар с
+    # къса история (RainViewer пази ~30 мин). Пробваме без резервите / без ИАБГ,
+    # като RO (котвата) остава; зоната им се покрива от сателита.
+    if len(series) < MIN_SERIES and len(active) > 1:
+        optional = [s for s in active if s != "romania_composite"]
+        optional.sort(key=lambda s: not s.startswith("rainviewer_"))   # първо резервите
+        for drop in [optional[:i + 1] for i in range(len(optional))]:
+            srcs = {s: v for s, v in active.items() if s not in drop}
+            alt = build(srcs, log=False)
+            if len(alt) > len(series):
+                logger.warning(f"  Серията е {len(series)} кадъра — без {', '.join(drop)}: "
+                               f"{len(alt)} кадъра (зоната им → сателит)")
+                series, active = alt, srcs
+            if len(series) >= MIN_SERIES:
+                break
+
     composites = []
-    for k in range(n_composites + 3):
-        T = anchor - dt.timedelta(minutes=GRID_STEP_MIN * k)
-        chosen, missing = [], []
-        for src, frames in active.items():
-            best = min(frames, key=lambda f: abs((f["timestamp"] - T).total_seconds()))
-            tol = TOL_SEC.get(src, TOL_SEC_DEFAULT)
-            if abs((best["timestamp"] - T).total_seconds()) <= tol:
-                chosen.append(best)
-            else:
-                missing.append(src)
-
-        if missing:
-            logger.info(f"  Кадър {T:%H:%M}: липсва {', '.join(missing)} — изхвърлен")
-            if composites:
-                break          # серията трябва да е непрекъсната
-            continue
-
+    for T, chosen in series:
         logger.info(f"  Кадър {T:%H:%M}:")
         composites.append(create_composite(chosen, T, target_lat, target_lon))
-        if len(composites) == n_composites:
-            break
 
     composites.reverse()   # хронологичен ред
     if composites:

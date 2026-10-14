@@ -116,7 +116,7 @@ def main():
         log.info(f"── Фаза 1c: резерв {rid} ({cfg['name']}) за {primary} ──")
         try:
             from src.ingest.radar_rainviewer import ingest_tr34
-            frames = ingest_tr34(n_frames=6)
+            frames = ingest_tr34(n_frames=12)   # ~70 мин: да покрие серията на RO
             if frames:
                 all_frames[f"rainviewer_{rid}"] = frames
         except Exception as e:
@@ -258,13 +258,6 @@ def main():
 
     generate_pages_data(forecast["last_composite"], forecast,
                         blended, blend_times)
-
-    # Публичната страница (docs/embed/): кадри за Leaflet + таблица за стартовете
-    try:
-        from src.output.web_export import export_web
-        export_web(forecast, blended, blend_times)
-    except Exception as e:
-        log.warning(f"  Web експорт: {e}")
 
     # Копирай картите в docs/ за GitHub Pages
     import shutil
