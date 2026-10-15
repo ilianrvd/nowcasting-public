@@ -2,9 +2,10 @@
 Ingest: EUMETSAT EUMETView (WCS, без регистрация)
 =================================================
   H40B   (mtg_fd__h40b)   — валеж от MTG FCI + LEO MW, mm/h, на 10 мин, ~20–30 мин закъснение
-  LI AFA (mtg_fd__li_afa) — мълнии от MTG Lightning Imager, на 5 мин, ~10–14 мин закъснение
-                            (WCS дава оцветена картинка; броят светкавици за 5 мин
-                             се извлича от зеления канал на палитрата 1 → 20+)
+  LI AFA (li_afa)         — мълнии от MTG Lightning Imager, на 5 мин, ~10–14 мин закъснение.
+                            От 10.2026 слоят е махнат от WCS и е само в WMS (оцветена
+                            картинка). Броят светкавици за 5 мин се връща от цвета по
+                            легендата на EUMETView (1 → 10 → 20+), таблица _AFA_LUT.
 Сървър: https://view.eumetsat.int/geoserver/  (Fees: none, AccessConstraints: none)
 """
 
@@ -16,6 +17,8 @@ import requests
 logger = logging.getLogger("ingest.eumetview")
 
 WCS = "https://view.eumetsat.int/geoserver/wcs"
+WMS_LI = "https://view.eumetsat.int/geoserver/mtg_fd/wms"
+LI_RES_DEG = 0.02            # ~2 km — решетката на FCI, на която е AFA
 BBOX_LAT = (40.0, 45.0)      # малко по-широко от домейна — за адвекция отвън
 BBOX_LON = (20.5, 30.0)
 
@@ -102,12 +105,116 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60) -> dict | None:
             "source": "eumetsat_h40b"}
 
 
-def _afa_count(rgb: np.ndarray) -> np.ndarray:
-    """RGB от палитрата жълто→червено (1 → 20+) → брой светкавици за 5 мин."""
-    colored = rgb.max(axis=0) > 0
-    g = rgb[1]
-    count = 1.0 + 19.0 * (1.0 - g / 255.0)
-    return np.where(colored, np.clip(count, 1.0, 20.0), 0.0).astype(np.float32)
+# Легендата на li_afa (GetLegendGraphic, 640 px): цвят → светкавици/5 мин.
+# Отметките 1 / 10 / 20+ са на x = 148 / 405.5 / 635; между тях — линейно.
+_AFA_LUT = np.array([
+    (255, 255, 233, 1.00),
+    (255, 251, 193, 1.28),
+    (255, 249, 189, 1.56),
+    (255, 246, 182, 1.84),
+    (255, 244, 178, 2.12),
+    (255, 240, 170, 2.40),
+    (255, 239, 166, 2.68),
+    (255, 237, 161, 2.96),
+    (255, 234, 155, 3.24),
+    (255, 232, 151, 3.52),
+    (255, 228, 143, 3.80),
+    (254, 227, 139, 4.08),
+    (254, 223, 132, 4.36),
+    (254, 221, 129, 4.63),
+    (254, 219, 124, 4.91),
+    (254, 215, 117, 5.19),
+    (254, 212, 113, 5.47),
+    (254, 205, 105, 5.75),
+    (254, 202, 102, 6.03),
+    (254, 195, 94, 6.31),
+    (254, 191, 91, 6.59),
+    (254, 189, 87, 6.87),
+    (254, 181, 79, 7.15),
+    (254, 178, 76, 7.43),
+    (254, 171, 72, 7.71),
+    (254, 168, 71, 7.99),
+    (253, 161, 68, 8.27),
+    (253, 158, 67, 8.55),
+    (253, 153, 65, 8.83),
+    (253, 148, 63, 9.11),
+    (253, 145, 61, 9.39),
+    (253, 137, 58, 9.67),
+    (253, 131, 57, 9.95),
+    (253, 119, 54, 10.28),
+    (253, 114, 52, 10.63),
+    (252, 107, 51, 10.98),
+    (252, 97, 47, 11.33),
+    (252, 92, 46, 11.68),
+    (252, 81, 42, 12.03),
+    (251, 76, 41, 12.37),
+    (246, 66, 39, 12.72),
+    (244, 61, 37, 13.07),
+    (242, 56, 36, 13.42),
+    (237, 48, 33, 13.77),
+    (235, 43, 32, 14.12),
+    (230, 34, 29, 14.47),
+    (228, 29, 28, 14.81),
+    (222, 23, 29, 15.16),
+    (219, 20, 29, 15.51),
+    (213, 16, 31, 15.86),
+    (208, 13, 32, 16.21),
+    (205, 11, 33, 16.56),
+    (198, 6, 35, 16.91),
+    (195, 3, 36, 17.25),
+    (188, 0, 37, 17.60),
+    (183, 0, 38, 17.95),
+    (176, 0, 38, 18.30),
+    (167, 0, 38, 18.65),
+    (161, 0, 38, 19.00),
+    (150, 0, 38, 19.35),
+    (145, 0, 38, 19.69),
+    (134, 0, 29, 20.00),
+], dtype=np.float32)
+
+
+def _afa_count(rgba: np.ndarray) -> np.ndarray:
+    """RGBA картинка от WMS (rows, cols, 4) → брой светкавици за 5 мин (0 = няма)."""
+    alpha = rgba[..., 3] > 0
+    out = np.zeros(rgba.shape[:2], dtype=np.float32)
+    if alpha.any():
+        px = rgba[alpha][:, :3].astype(np.float32)
+        d = ((px[:, None, :] - _AFA_LUT[None, :, :3]) ** 2).sum(-1)
+        out[alpha] = _AFA_LUT[d.argmin(1), 3]
+    return out
+
+
+def _li_latest_time(timeout: float = 60) -> dt.datetime:
+    """Последният кадър на li_afa от WMS GetCapabilities (Dimension time, default=...)."""
+    r = requests.get(WMS_LI, params=dict(service="WMS", version="1.3.0", request="GetCapabilities"),
+                     timeout=timeout)
+    r.raise_for_status()
+    i = r.text.find("<Name>li_afa</Name>")
+    if i < 0:
+        raise RuntimeError("li_afa липсва в WMS GetCapabilities")
+    m = re.search(r'<Dimension name="time" default="([^"]+)"', r.text[i:i + 6000])
+    return dt.datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+
+
+def _li_getmap(t: dt.datetime, timeout: float = 30):
+    """WMS GetMap (PNG) за bbox-а → (count, lat_1d възходящо, lon_1d)."""
+    from PIL import Image
+    w = int(round((BBOX_LON[1] - BBOX_LON[0]) / LI_RES_DEG))
+    h = int(round((BBOX_LAT[1] - BBOX_LAT[0]) / LI_RES_DEG))
+    params = dict(service="WMS", version="1.3.0", request="GetMap", layers="li_afa", styles="",
+                  crs="EPSG:4326",                      # WMS 1.3.0 + EPSG:4326 → lat,lon
+                  bbox=f"{BBOX_LAT[0]},{BBOX_LON[0]},{BBOX_LAT[1]},{BBOX_LON[1]}",
+                  width=w, height=h, format="image/png", transparent="true",
+                  time=t.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    r = requests.get(WMS_LI, params=params, timeout=timeout)
+    r.raise_for_status()
+    if "image" not in r.headers.get("Content-Type", ""):
+        raise RuntimeError(f"WMS грешка: {r.text[:200]}")
+    rgba = np.array(Image.open(io.BytesIO(r.content)).convert("RGBA"))
+    count = _afa_count(rgba)[::-1, :]                    # отгоре надолу → възходящо по lat
+    lat = BBOX_LAT[0] + (np.arange(h) + 0.5) * (BBOX_LAT[1] - BBOX_LAT[0]) / h
+    lon = BBOX_LON[0] + (np.arange(w) + 0.5) * (BBOX_LON[1] - BBOX_LON[0]) / w
+    return count, lat, lon
 
 
 def fetch_li_frames(now: dt.datetime = None, back_min: float = 40,
@@ -120,9 +227,9 @@ def fetch_li_frames(now: dt.datetime = None, back_min: float = 40,
     import time
     now = now or dt.datetime.now(dt.timezone.utc)
     try:
-        t_last = _latest_time("mtg_fd__li_afa")
+        t_last = _li_latest_time()
     except Exception as e:
-        logger.warning(f"LI AFA недостъпен: {e}")
+        logger.warning(f"LI AFA (WMS) недостъпен: {e}")
         return []
     age = (now - t_last).total_seconds() / 60
     if age > max_age_min:
@@ -134,8 +241,8 @@ def fetch_li_frames(now: dt.datetime = None, back_min: float = 40,
     def _one(t):
         for attempt in (1, 2):
             try:
-                rgb, lat, lon = _get_coverage("mtg_fd__li_afa", t, timeout=30)
-                return {"time": t, "count": _afa_count(rgb), "lat": lat, "lon": lon}
+                count, lat, lon = _li_getmap(t, timeout=30)
+                return {"time": t, "count": count, "lat": lat, "lon": lon}
             except Exception as e:
                 if attempt == 1:
                     time.sleep(2)
