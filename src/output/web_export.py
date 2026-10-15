@@ -37,7 +37,7 @@ TZ = ZoneInfo("Europe/Sofia")
 R_CONV_KM = 20.0
 R_RAIN_KM = 10.0
 DBZ_RAIN, DBZ_CONV = 20.0, 45.0
-CONV_MIN_PX = 4          # 🔴: поне толкова пиксела ≥45 dBZ (≈ 8 km² ядро)
+CONV_MIN_PX = 4          # 🔴: поне толкова пиксела ≥45 dBZ (≈ 4 km² ядро)
 RAIN_MIN_FRAC = 0.05     # 🟡: поне 5% от кръга 10 km (≈ 16 km²) с ≥20 dBZ
 DBZ_SHOW = 15.0          # на картата: под това не се рисува (шум, слабо ехо)
 MIN_BLOB_PX = 4          # изолирани петна под този размер се махат (само за картата)
@@ -223,9 +223,12 @@ def export_web(forecast, blended=None, blend_times=None):
                     continue
                 c, w = _status(f, li if m == 0 else None, mk)
                 st.append(c); why.append(w)
-            site_out.append({**s, "status": st, "why": why})
+            # за точките на картата: състояние за всеки кадър (вкл. +4…+6 ч)
+            st_fr = [_status(f, li if m == 0 else None, mk)[0] for m, f, _ in frames]
+            site_out.append({**s, "status": st, "why": why, "status_frames": st_fr})
         with open(os.path.join(OUT_DIR, "sites.json"), "w", encoding="utf-8") as fo:
             json.dump({"leads_min": SITE_LEADS,
+                       "frame_leads_min": [m for m, _, _ in frames],
                        "leads_local": [_local(t0 + dt.timedelta(minutes=m)) for m in SITE_LEADS],
                        "radius_conv_km": R_CONV_KM, "radius_rain_km": R_RAIN_KM,
                        "sites": site_out}, fo, ensure_ascii=False)

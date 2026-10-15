@@ -123,14 +123,15 @@ function show(i) {
   document.getElementById('tlabel').innerHTML =
     `${f.time_local} <small>(${leadText(f.lead_min)}) · ${f.source}</small>`;
   if (ltgLayer) { f.lead_min === 0 ? ltgLayer.addTo(map) : ltgLayer.remove(); }
-  drawSites(nearestSiteLead(f.lead_min));
+  drawSites(i);
 }
 
-function drawSites(k) {
+function drawSites(i) {                 // i = индекс на кадъра на картата
   if (!sites) return;
   if (siteLayer) siteLayer.remove();
+  const k = nearestSiteLead(meta.frames[i].lead_min);   // резерв за стар sites.json
   siteLayer = L.layerGroup(sites.sites.map(s => {
-    const st = s.status[k];
+    const st = s.status_frames ? s.status_frames[i] : s.status[k];
     const icon = L.divIcon({ className: '', html: `<div class="site-pin" style="background:${COLORS[st]}"></div>`, iconSize: [12, 12] });
     return L.marker([s.lat, s.lon], { icon, title: s.name })
       .bindPopup(`<b>${s.name}</b><br>посоки: ${s.dirs || '—'} · ${s.type || ''}` +
