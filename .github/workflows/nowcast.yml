@@ -13,14 +13,20 @@ concurrency:
   group: nowcast
   cancel-in-progress: false
 
+# Pages се публикува директно като артефакт (без commit на картинките —
+# иначе repo-то расте с ~30 MB/ден). Settings → Pages → Source: GitHub Actions.
 permissions:
-  contents: write
+  contents: read
   pages: write
+  id-token: write
 
 jobs:
   nowcast:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -49,12 +55,11 @@ jobs:
         run: |
           python run_nowcast.py
 
-      - name: Commit & push results
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A docs/maps/ docs/embed/
-          git add -f data/output/maps/nowcast_latest.png data/output/maps/blended_latest.png data/output/maps/meta.json
-          git diff --staged --quiet || git commit -m "Nowcast $(date -u +'%Y-%m-%d %H:%M') UTC"
-          git pull --rebase -X theirs || true   # ако междувременно е качен код
-          git push
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

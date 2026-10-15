@@ -1,11 +1,12 @@
-__pycache__/ 
-*.pyc 
-data/radar/ 
-data/lightning/ 
-data/icon/ 
-logs/ 
-data/output/maps/nowcast_2*.png 
-data/output/maps/blended_2*.png 
-!data/output/maps/nowcast_latest.png
-!data/output/maps/blended_latest.png__pycache__/
+__pycache__/
 *.pyc
+data/radar/
+data/lightning/
+data/icon/
+logs/
+
+# Генерирани от run_nowcast.py — публикуват се в Pages от workflow-а, не се пазят в git
+data/output/
+docs/maps/*.png
+docs/maps/meta.json
+docs/embed/data/

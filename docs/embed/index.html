@@ -46,6 +46,7 @@
   .ltg { font-size: 15px; line-height: 15px; text-shadow: 0 0 3px #fff; }
   .site-pin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 2px #0008; }
   @media (max-width: 600px) { #tlabel { min-width: 0; width: 100%; } th, td { padding: 4px 3px; } }
+  .author { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -78,8 +79,10 @@
 
   <div class="note">
     Информативен продукт, <b>не е официална прогноза</b>. До +1 ч прогнозата е по радар и сателит,
-    след това постепенно по модела ICON — точността намалява с времето. Решението за полет е на пилота.<br>
+    след това постепенно по модела ICON — точността намалява с времето. Решението за полет е на пилота.
+    Обновява се на ~20 мин между 06 и 21 ч.<br>
     Данни: <span id="credits">—</span>
+    <div class="author">Автор: <b>Илиан Манафов</b> · разработено с помощта на Claude (Anthropic)</div>
   </div>
 </div>
 
@@ -182,6 +185,7 @@ async function load() {
   sl.max = meta.frames.length - 1; sl.oninput = e => show(+e.target.value);
   document.getElementById('play').onclick = play;
 
+  if (ltgLayer) ltgLayer.remove();       // при опресняване: махаме мълниите от предния пуск
   ltgLayer = L.layerGroup(meta.lightning.map(p => L.marker([p[0], p[1]], {
     icon: L.divIcon({ className: 'ltg', html: '⚡', iconSize: [14, 14] }), interactive: false })));
 
@@ -193,6 +197,7 @@ async function load() {
     document.getElementById('rc').textContent = sites.radius_conv_km;
     drawFilters(); drawTable();
   }
+  idx = Math.min(idx, meta.frames.length - 1);   // новият пуск може да има по-малко кадри
   show(idx);
 
   try {
