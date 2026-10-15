@@ -282,4 +282,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Изход без финализация на интерпретатора: фоновата нишка за H40B може още да
+    # е вътре в C код (requests/tifffile), ако EUMETView отговаря бавно — тогава
+    # нормалното затваряне гърми с "double free or corruption" (exit 134), стъпката
+    # в Actions пада и Pages не се публикува, въпреки че всичко е записано.
+    import traceback
+    code = 0
+    try:
+        main()
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+    except Exception:
+        traceback.print_exc()
+        code = 1
+    finally:
+        logging.shutdown()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
