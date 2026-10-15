@@ -147,7 +147,7 @@ function drawTable() {
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'bg'));
   body.innerHTML = rows.map(s => `<tr><td data-lat="${s.lat}" data-lon="${s.lon}">${s.name}` +
       ` <small>${s.dirs || ''}</small></td>` +
-      s.status.map(st => `<td><span class="dot ${st || 'na'}"></span></td>`).join('') + '</tr>').join('');
+      s.status.map((st, i) => `<td title="${(s.why && s.why[i]) || ''}"><span class="dot ${st || 'na'}"></span></td>`).join('') + '</tr>').join('');
   body.querySelectorAll('td[data-lat]').forEach(td => td.onclick = () => {
     map.setView([+td.dataset.lat, +td.dataset.lon], 10);
     document.getElementById('map').scrollIntoView({ behavior: 'smooth' });

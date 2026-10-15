@@ -10,8 +10,11 @@
   docs/embed/data/sites.json  — за всеки старт: състояние 🟢/🟡/🔴 сега и до +3 ч
 
 Правило за стартовете (радиус около старта):
-  🔴 конвекция: мълнии (LI, последните 15 мин) в R_CONV, или ехо ≥ 45 dBZ в R_CONV
-  🟡 валеж:     ехо ≥ 20 dBZ (≈0.6 mm/h) в R_RAIN
+  🔴 конвекция: мълнии (LI, последните 15 мин) в R_CONV, или ядро ≥ 45 dBZ
+               с площ ≥ CONV_MIN_PX пиксела (≈ km²) в R_CONV
+  🟡 валеж:     ехо ≥ 20 dBZ (≈0.6 mm/h) в ≥ RAIN_MIN_FRAC от кръга R_RAIN
+Иска се площ, не единичен пиксел — шум и отражения от терена (румънския
+composite) иначе палят цветове от нищо. Причината се пише в sites.json ("why").
   🟢 иначе
 Прогнозните кадри са от blend-а (радар → H40B → ICON); ≥45 dBZ там идва от
 усилването с мълнии или от LPI ядрата на ICON, т.е. отразява конвекция.
@@ -34,6 +37,8 @@ TZ = ZoneInfo("Europe/Sofia")
 R_CONV_KM = 20.0
 R_RAIN_KM = 10.0
 DBZ_RAIN, DBZ_CONV = 20.0, 45.0
+CONV_MIN_PX = 4          # 🔴: поне толкова пиксела ≥45 dBZ (≈ 8 km² ядро)
+RAIN_MIN_FRAC = 0.05     # 🟡: поне 5% от кръга 10 km (≈ 16 km²) с ≥20 dBZ
 DBZ_SHOW = 15.0          # на картата: под това не се рисува (шум, слабо ехо)
 MIN_BLOB_PX = 4          # изолирани петна под този размер се махат (само за картата)
 
@@ -131,14 +136,19 @@ def _disk_masks(sites, lat, lon):
 
 
 def _status(dbz, ltg, masks):
-    """Състояние на един старт за едно поле: 'red' / 'yellow' / 'green'."""
+    """Състояние на един старт за едно поле: ('red'/'yellow'/'green', причина)."""
     conv_idx, rain_idx = masks
     v = np.nan_to_num(dbz[conv_idx], nan=0.0)
-    if (ltg is not None and (ltg[conv_idx] >= 1).any()) or (v >= DBZ_CONV).any():
-        return "red"
-    if (np.nan_to_num(dbz[rain_idx], nan=0.0) >= DBZ_RAIN).any():
-        return "yellow"
-    return "green"
+    r = np.nan_to_num(dbz[rain_idx], nan=0.0)
+    n_ltg = int((ltg[conv_idx] >= 1).sum()) if ltg is not None else 0
+    n45 = int((v >= DBZ_CONV).sum())
+    frac20 = float((r >= DBZ_RAIN).mean()) if r.size else 0.0
+    why = f"max {v.max():.0f} dBZ, ≥45: {n45} px, ≥20: {frac20:.0%}" + (f", мълнии {n_ltg} px" if n_ltg else "")
+    if n_ltg > 0 or n45 >= CONV_MIN_PX:
+        return "red", why
+    if frac20 >= RAIN_MIN_FRAC:
+        return "yellow", why
+    return "green", why
 
 
 def _lightning_points(li, lat, lon, step=0.1):
@@ -205,14 +215,15 @@ def export_web(forecast, blended=None, blend_times=None):
         by_lead = {m: f for m, f, _ in frames}
         site_out = []
         for s, mk in zip(sites, masks):
-            st = []
+            st, why = [], []
             for m in SITE_LEADS:
                 f = by_lead.get(m)
                 if f is None:
-                    st.append(None)
+                    st.append(None); why.append(None)
                     continue
-                st.append(_status(f, li if m == 0 else None, mk))
-            site_out.append({**s, "status": st})
+                c, w = _status(f, li if m == 0 else None, mk)
+                st.append(c); why.append(w)
+            site_out.append({**s, "status": st, "why": why})
         with open(os.path.join(OUT_DIR, "sites.json"), "w", encoding="utf-8") as fo:
             json.dump({"leads_min": SITE_LEADS,
                        "leads_local": [_local(t0 + dt.timedelta(minutes=m)) for m in SITE_LEADS],
@@ -220,6 +231,10 @@ def export_web(forecast, blended=None, blend_times=None):
                        "sites": site_out}, fo, ensure_ascii=False)
         n_red = sum(1 for s in site_out if "red" in s["status"][:4])
         logger.info(f"  Стартове: {len(site_out)}, с 🔴 до +90 мин: {n_red}")
+        for s in site_out:                      # за диагностика: защо е червено
+            for m, c, w in zip(SITE_LEADS, s["status"], s["why"]):
+                if c == "red":
+                    logger.info(f"    🔴 {s['name']} +{m} мин: {w}")
 
     # ── frames.json ───────────────────────────────────────
     mi = comp.get("motion_info") or {}
