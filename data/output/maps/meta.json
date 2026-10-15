@@ -1,8 +1,9 @@
 {
-  "generated_utc": "2026-10-14T20:12:09Z",
-  "observation_time": "2026-10-14T20:00:00Z",
+  "generated_utc": "2026-10-15T03:09:28Z",
+  "observation_time": "2026-10-15T02:50:00Z",
   "sources": [
-    "romania_composite"
+    "romania_composite",
+    "rainviewer_TR34"
   ],
   "nowcast_minutes": 60,
   "blend_hours": 6,
@@ -17,6 +18,10 @@
     {
       "name": "NMA România",
       "url": "https://www.meteoromania.ro/"
+    },
+    {
+      "name": "MGM (Истанбул) — Weather data by RainViewer",
+      "url": "https://www.rainviewer.com/"
     },
     {
       "name": "EUMETSAT (MTG Lightning Imager, H SAF H40B)",
