@@ -264,7 +264,9 @@ def main():
     # Публичната страница (docs/embed/): кадри за Leaflet + таблица за стартовете
     try:
         from src.output.web_export import export_web
-        export_web(forecast, blended, blend_times)
+        idat = icon_data or {}
+        export_web(forecast, blended, blend_times, winds=idat.get("winds"),
+                   wind_grid=(idat["lat"], idat["lon"]) if idat.get("winds") else None)
     except Exception as e:
         log.warning(f"  Web експорт: {e}")
 

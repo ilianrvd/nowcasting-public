@@ -141,6 +141,44 @@ def _fetch_wind700(run: dt.datetime, t_valid: dt.datetime, cache_dir: str, crop)
     return {"u": out["u"], "v": out["v"], "time": run + dt.timedelta(hours=step)}
 
 
+def _get_grib(url_dir: str, fname: str, cache_dir: str, crop):
+    path = os.path.join(cache_dir, fname[:-4])
+    if not os.path.exists(path):
+        r = _session.get(url_dir + fname, timeout=60)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            f.write(bz2.decompress(r.content))
+    lat, lon, data = _read_grib(path)
+    return np.nan_to_num(crop(lat, lon, data))
+
+
+def _fetch_site_winds(run: dt.datetime, s0: int, s1: int, cache_dir: str, crop):
+    """
+    Вятър за таблицата със стартовете, по часове s0..s1 (валидни моменти):
+      u10/v10   — 10 m (m/s), моментни в часа
+      gust      — VMAX_10M: максимален порив за изминалия час (m/s)
+      u850/v850 — 850 hPa (m/s)
+    Липсващо поле → None за него (страницата го показва като „—“).
+    """
+    base = ICON_DWD["base_url"]
+    sl = lambda f, s: f"icon-eu_europe_regular-lat-lon_single-level_{run:%Y%m%d%H}_{s:03d}_{f.upper()}.grib2.bz2"
+    pl = lambda c, s: f"icon-eu_europe_regular-lat-lon_pressure-level_{run:%Y%m%d%H}_{s:03d}_850_{c.upper()}.grib2.bz2"
+    jobs = {"u10": lambda s: (f"{base}/{run.hour:02d}/u_10m/", sl("u_10m", s)),
+            "v10": lambda s: (f"{base}/{run.hour:02d}/v_10m/", sl("v_10m", s)),
+            "gust": lambda s: (f"{base}/{run.hour:02d}/vmax_10m/", sl("vmax_10m", s)),
+            "u850": lambda s: (f"{base}/{run.hour:02d}/u/", pl("u", s)),
+            "v850": lambda s: (f"{base}/{run.hour:02d}/v/", pl("v", s))}
+    steps = list(range(max(1, s0), s1 + 1))           # VMAX за стъпка 0 няма смисъл
+    out = {"times": [run + dt.timedelta(hours=s) for s in steps]}
+    for key, job in jobs.items():
+        try:
+            out[key] = np.stack([_get_grib(*job(s), cache_dir, crop) for s in steps]).astype(np.float32)
+        except Exception as e:
+            logger.warning(f"  Вятър {key}: недостъпен ({str(e)[:70]})")
+            out[key] = None
+    return out
+
+
 def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict | None:
     if now is None:
         now = dt.datetime.now(dt.timezone.utc)
@@ -221,6 +259,19 @@ def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict 
         logger.warning(f"  Вятър 700 hPa недостъпен: {str(e)[:80]} — без проверка на движението")
         wind700 = None
 
+    # Вятър за стартовете (10 m, пориви, 850 hPa) — по часове, не е задължителен
+    winds = None
+    try:
+        winds = _fetch_site_winds(run, s0, s1, cache_dir, crop)
+        if winds.get("u10") is not None:
+            sp = np.hypot(winds["u10"], winds["v10"]) * 3.6
+            g = winds["gust"] * 3.6 if winds.get("gust") is not None else None
+            logger.info(f"  Вятър 10 m: {len(winds['times'])} часа, средно {sp.mean():.0f} km/h, "
+                        f"max {sp.max():.0f} km/h" + (f", пориви до {g.max():.0f} km/h" if g is not None else ""))
+    except Exception as e:
+        logger.warning(f"  Вятър за стартовете недостъпен: {str(e)[:80]}")
+        winds = None
+
     _cleanup(ICON_DWD["keep_runs_hours"])
 
     return {
@@ -232,6 +283,7 @@ def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict 
         "valid_times": times,
         "run": run,
         "wind700": wind700,
+        "winds": winds,
     }
 
 

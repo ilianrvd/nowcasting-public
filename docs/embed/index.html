@@ -38,6 +38,14 @@
   .dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; }
   .green { background: var(--green); } .yellow { background: var(--yellow); } .red { background: var(--red); }
   .na { background: #cfd5db; }
+  .tabs { display: flex; gap: 6px; margin: 10px 0 4px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--line); background: #f6f8fa; border-radius: 8px; padding: 5px 12px; font-size: .85rem; cursor: pointer; }
+  .tabs button.on { background: var(--fg); color: #fff; border-color: var(--fg); }
+  td.wc { font-size: .8rem; white-space: nowrap; border-radius: 4px; }
+  td.wc.green { background: #e3f3e6; } td.wc.yellow { background: #fbf0c9; } td.wc.red { background: #f8d9d4; }
+  td.wc small { color: var(--muted); }
+  .arr { display: inline-block; font-weight: 700; }
+  #detail { font-size: .82rem; color: var(--fg); background: #f6f8fa; border-radius: 6px; padding: 6px 10px; margin-top: 6px; display: none; }
   .nodata { background: repeating-linear-gradient(45deg, #8a939e 0 3px, #d5dae0 3px 6px); }
   .filters { margin: 14px 0 6px; display: flex; gap: 6px; flex-wrap: wrap; }
   .filters button { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 3px 10px; font-size: .82rem; cursor: pointer; }
@@ -55,7 +63,9 @@
   <h1>Валежи и гръмотевици — следващите 6 часа</h1>
   <div class="sub">Наблюдение <b id="obs">—</b> <span id="fresh" class="fresh">—</span></div>
 
-  <div id="map"></div>
+  <div id="mapwrap" style="position:relative"><div id="map"></div>
+    <div id="pinlbl" style="position:absolute;top:18px;right:10px;z-index:700;background:rgba(255,255,255,.9);
+      border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:.78rem;pointer-events:none">Точки: общо</div></div>
 
   <div class="controls">
     <button id="play" aria-label="Пусни">▶</button>
@@ -73,12 +83,28 @@
   <div class="motion" id="motion"></div>
 
   <h2 style="font-size:1rem;margin:16px 0 0">Стартове</h2>
-  <div class="sub"><span class="dot green"></span> чисто &nbsp;
+  <div class="tabs" id="tabs">
+    <button data-t="all" class="on">Общо</button>
+    <button data-t="rain">Валеж</button>
+    <button data-t="w10">Вятър 10 m</button>
+    <button data-t="w850">Вятър ~1500 m</button>
+  </div>
+  <div class="sub" id="sub-all"><span class="dot green"></span> без пречки &nbsp;
+    <span class="dot yellow"></span> дъжд или неподходящ вятър &nbsp;
+    <span class="dot red"></span> гръмотевици или опасен вятър &nbsp;
+    <span class="dot nodata"></span> няма данни<br><small>валеж + вятър на 10 m; подробности — в другите табове</small></div>
+  <div class="sub" id="sub-rain" style="display:none"><span class="dot green"></span> чисто &nbsp;
     <span class="dot yellow"></span> дъжд до <span id="rr">10</span> km &nbsp;
     <span class="dot red"></span> гръмотевична клетка до <span id="rc">20</span> km &nbsp;
     <span class="dot nodata"></span> няма данни</div>
+  <div class="sub" id="sub-w10" style="display:none">↓ накъдето духа · km/h <small>(пориви)</small> · модел ICON<br>
+    <span class="dot green"></span> подходящ &nbsp; <span class="dot yellow"></span> страничен / силен &nbsp;
+    <span class="dot red"></span> в гръб / опасен</div>
+  <div class="sub" id="sub-w850" style="display:none">↓ накъдето духа · km/h · 850 hPa (~1500 m), модел ICON<br>
+    <span class="dot green"></span> до 25 &nbsp; <span class="dot yellow"></span> 25–40 &nbsp; <span class="dot red"></span> над 40 km/h</div>
   <div class="filters" id="filters"></div>
   <table id="sites"><thead></thead><tbody></tbody></table>
+  <div id="detail"></div>
 
   <div class="note">
     Информативен продукт, <b>не е официална прогноза</b>. До +1 ч прогнозата е по радар и сателит,
@@ -93,7 +119,7 @@
 <script>
 const DATA = 'data/';
 const COLORS = { green: '#2e9e44', yellow: '#e8b500', red: '#d7301f', nodata: '#8a939e', null: '#cfd5db' };
-let meta, sites, overlay, ltgLayer, siteLayer, idx = 0, timer = null, region = 'всички';
+let meta, sites, overlay, ltgLayer, siteLayer, idx = 0, timer = null, region = 'всички', tab = 'all';
 
 const map = L.map('map', { zoomControl: true, attributionControl: true });
 map.fitBounds([[41.25, 22.35], [44.2, 28.6]]);
@@ -134,34 +160,104 @@ function drawSites(i) {                 // i = индекс на кадъра н
   if (siteLayer) siteLayer.remove();
   const k = nearestSiteLead(meta.frames[i].lead_min);   // резерв за стар sites.json
   siteLayer = L.layerGroup(sites.sites.map(s => {
-    const st = s.status_frames ? s.status_frames[i] : s.status[k];
+    const fr = tab === 'w10' ? s.w10_frames : tab === 'w850' ? s.w850_frames
+             : tab === 'all' ? allFrames(s).map(x => x[0]) : s.status_frames;
+    const st = fr ? fr[i] : s.status[k];
     const icon = L.divIcon({ className: '', html: `<div class="site-pin" style="background:${COLORS[st]}"></div>`, iconSize: [12, 12] });
-    return L.marker([s.lat, s.lon], { icon, title: s.name })
+    const f = meta.frames[i];
+    const rain = { green: 'чисто', yellow: 'дъжд', red: 'гръмотевична клетка', nodata: 'няма данни' }[s.status_frames ? s.status_frames[i] : ''] || '';
+    const whyR = s.why_frames ? s.why_frames[i] : '';
+    const wind = s.wtxt_frames ? s.wtxt_frames[i] : '';
+    const allTxt = tab === 'all' && s.status_frames ? allFrames(s)[i][1] : '';
+    const tip = `<b>${s.name}</b> · ${f.time_local}<br>` +
+                (allTxt || rain + (wind ? `<br>${wind.split('\n')[0]}` : ''));
+    return L.marker([s.lat, s.lon], { icon })
+      .bindTooltip(tip, { direction: 'top', offset: [0, -6] })
       .bindPopup(`<b>${s.name}</b><br>посоки: ${s.dirs || '—'} · ${s.type || ''}` +
+                 `<br><b>${f.time_local}</b> (${leadText(f.lead_min)}): ${rain}` +
+                 (whyR ? `<br><small>${whyR}</small>` : '') +
+                 (wind ? `<br>${wind.replace(/\n/g, '<br>')}` : '') +
                  (s.acc === '?' ? '<br><i>координатите са приблизителни</i>' : ''));
   })).addTo(map);
+}
+
+// „Общо“: по-лошото от валежа и вятъра на 10 m
+const RAIN_TXT = { yellow: 'дъжд', red: 'гръмотевична клетка', nodata: 'няма данни за валежа' };
+function combine(rain, w) {               // → [клас, причина]
+  const wc = w ? w.c : null;
+  if (rain === 'red' || wc === 'red')
+    return ['red', rain === 'red' ? RAIN_TXT.red + (wc === 'red' ? '; вятър: ' + w.t : '') : 'вятър: ' + w.t];
+  if (rain === 'yellow' || wc === 'yellow')
+    return ['yellow', [rain === 'yellow' ? RAIN_TXT.yellow : '', wc === 'yellow' ? 'вятър: ' + w.t : ''].filter(Boolean).join('; ')];
+  if (rain === 'nodata') return ['nodata', RAIN_TXT.nodata + (w ? '; вятър: ' + w.t : '')];
+  if (!rain) return [null, ''];
+  return ['green', 'без пречки' + (w ? ' — ' + w.t : '')];
+}
+function allLeads(s) { return s.status.map((r, i) => combine(r, s.w10 && s.w10[i])); }
+function allFrames(s) {                   // вятърът по кадри е само клас — текстът е в wtxt_frames
+  return (s.status_frames || []).map((r, i) => {
+    const wc = s.w10_frames ? s.w10_frames[i] : null;
+    const wt = s.wtxt_frames ? (s.wtxt_frames[i] || '').split('\n')[0] : '';
+    return combine(r, wc ? { c: wc, t: wt } : null);
+  });
+}
+
+function cellsFor(s) {                  // [{cls, html, info}] за избрания таб
+  if (tab === 'all') return allLeads(s).map(([c, t]) => ({ cls: '', info: t,
+      html: `<span class="dot ${c || 'na'}"></span>` }));
+  if (tab === 'rain') return s.status.map((st, i) => ({ cls: '', info: (s.why && s.why[i]) || '',
+      html: `<span class="dot ${st || 'na'}"></span>` }));
+  const w = tab === 'w10' ? s.w10 : s.w850;
+  if (!w) return s.status.map(() => ({ cls: '', html: '—', info: 'няма данни за вятъра' }));
+  return w.map(x => !x ? { cls: '', html: '—', info: '' } : {
+    cls: 'wc ' + x.c, info: x.t,
+    html: `<span class="arr" style="transform:rotate(${x.d}deg)">↓</span> ${x.s}` +
+          (x.g != null ? ` <small>${x.g}</small>` : '') });
 }
 
 function drawTable() {
   const head = document.querySelector('#sites thead'), body = document.querySelector('#sites tbody');
   head.innerHTML = '<tr><th>Старт</th>' + sites.leads_local.map((t, i) =>
     `<th>${i === 0 ? 'сега' : t}</th>`).join('') + '</tr>';
-  const rank = s => s.status.slice(0, 4).includes('red') ? 0 : s.status.slice(0, 4).includes('yellow') ? 1 : 2;
+  const cls = s => tab === 'all' ? allLeads(s).map(x => x[0]) : tab === 'rain' ? s.status
+                   : ((tab === 'w10' ? s.w10 : s.w850) || []).map(x => x && x.c);
+  const rank = s => { const c = (cls(s) || []).slice(0, 4); return c.includes('red') ? 0 : c.includes('yellow') ? 1 : 2; };
   const rows = sites.sites.filter(s => region === 'всички' || s.region === region)
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'bg'));
-  body.innerHTML = rows.map(s => `<tr><td data-lat="${s.lat}" data-lon="${s.lon}">${s.name}` +
+  body.innerHTML = rows.map((s, r) => `<tr><td data-lat="${s.lat}" data-lon="${s.lon}">${s.name}` +
       ` <small>${s.dirs || ''}</small></td>` +
-      s.status.map((st, i) => `<td title="${(s.why && s.why[i]) || ''}"><span class="dot ${st || 'na'}"></span></td>`).join('') + '</tr>').join('');
+      cellsFor(s).map((c, i) => `<td class="${c.cls}" data-r="${r}" data-i="${i}" title="${c.info}">${c.html}</td>`).join('') +
+      '</tr>').join('');
   body.querySelectorAll('td[data-lat]').forEach(td => td.onclick = () => {
     map.setView([+td.dataset.lat, +td.dataset.lon], 10);
     document.getElementById('map').scrollIntoView({ behavior: 'smooth' });
   });
+  const det = document.getElementById('detail');                 // детайли с докосване (телефон)
+  det.style.display = 'none';
+  body.querySelectorAll('td[data-i]').forEach(td => td.onclick = () => {
+    const s = rows[+td.dataset.r], i = +td.dataset.i;
+    det.textContent = `${s.name}, ${i === 0 ? 'сега' : sites.leads_local[i]}: ${cellsFor(s)[i].info || '—'}`;
+    det.style.display = 'block';
+  });
+}
+
+function drawTabs() {
+  const has = sites && sites.sites.some(s => s.w10);
+  document.getElementById('tabs').style.display = has ? '' : 'none';
+  if (!has && tab !== 'rain') tab = 'rain';
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.className = b.dataset.t === tab ? 'on' : '';
+    b.onclick = () => { tab = b.dataset.t; drawTabs(); drawTable(); drawSites(idx); };
+  });
+  ['all', 'rain', 'w10', 'w850'].forEach(t => document.getElementById('sub-' + t).style.display = t === tab ? '' : 'none');
+  document.getElementById('pinlbl').textContent =
+    'Точки: ' + { all: 'общо (валеж + вятър)', rain: 'валеж', w10: 'вятър 10 m', w850: 'вятър ~1500 m' }[tab];
 }
 
 function drawFilters() {
   const regs = ['всички', ...new Set(sites.sites.map(s => s.region))];
   const names = { 'СЗ': 'Северозапад', 'З': 'Запад', 'ЮЗ': 'Югозапад', 'Ц': 'Централна',
-                  'СИ': 'Североизток', 'ЮИ': 'Югоизток', 'ИР': 'Източни Родопи' };
+                  'СИ': 'Североизток', 'ЮИ': 'Югоизток', 'ИР': 'Източни Родопи', 'Л': 'Летища' };
   const box = document.getElementById('filters');
   box.innerHTML = regs.map(r => `<button data-r="${r}" class="${r === region ? 'on' : ''}">${names[r] || r}</button>`).join('');
   box.querySelectorAll('button').forEach(b => b.onclick = () => { region = b.dataset.r; drawFilters(); drawTable(); });
@@ -200,7 +296,7 @@ async function load() {
   if (sites) {
     document.getElementById('rr').textContent = sites.radius_rain_km;
     document.getElementById('rc').textContent = sites.radius_conv_km;
-    drawFilters(); drawTable();
+    drawTabs(); drawFilters(); drawTable();
   }
   idx = Math.min(idx, meta.frames.length - 1);   // новият пуск може да има по-малко кадри
   show(idx);

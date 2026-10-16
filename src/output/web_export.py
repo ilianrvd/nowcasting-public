@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import BASE_DIR
+from config.settings import BASE_DIR, WIND
 
 logger = logging.getLogger("output.web")
 
@@ -162,6 +162,99 @@ def _status(dbz, ltg, masks, nodata=None):
     return "green", why
 
 
+# ── Вятър за стартовете ───────────────────────────────────
+_DIR = {"С": 0, "СИ": 45, "И": 90, "ЮИ": 135, "Ю": 180, "ЮЗ": 225, "З": 270, "СЗ": 315}
+_DIR_NAME = ["С", "ССИ", "СИ", "ИСИ", "И", "ИЮИ", "ЮИ", "ЮЮИ",
+             "Ю", "ЮЮЗ", "ЮЗ", "ЗЮЗ", "З", "ЗСЗ", "СЗ", "ССЗ"]
+
+
+def _arcs(dirs: str):
+    """Посоки за старт от таблицата → дъги (от, до по часовника). None = не се оценява.
+    „И-Ю-З“ = от изток през юг до запад; „СИ, Ю“ = две отделни посоки."""
+    if not dirs or "всички" in dirs:
+        return None
+    arcs = []
+    for tok in dirs.split(","):
+        angs = [_DIR[p.strip()] for p in tok.split("-") if p.strip() in _DIR]
+        if len(angs) == 1:
+            arcs.append((angs[0], angs[0]))
+        for a, b in zip(angs, angs[1:]):          # по по-краткия път
+            arcs.append((a, b) if (b - a) % 360 <= 180 else (b, a))
+    return arcs or None
+
+
+def _rel_dir(x: float, arcs) -> str:
+    """'in' — в сектора (± dir_tol), 'back' — далеч от средата на всеки сектор, иначе 'cross'."""
+    tol, back = WIND["dir_tol_deg"], WIND["back_deg"]
+    d = lambda p, q: abs((p - q + 180) % 360 - 180)
+    all_back = True
+    for a, b in arcs:
+        span = (b - a) % 360
+        if (x - a) % 360 <= span or min(d(x, a), d(x, b)) <= tol:
+            return "in"
+        if d(x, (a + span / 2) % 360) <= back:
+            all_back = False
+    return "back" if all_back else "cross"
+
+
+def _wind10_class(dfrom, spd, gust, arcs):
+    W = WIND
+    g = gust if gust is not None else 0.0
+    if spd < W["calm_kmh"] and g <= W["gust_yellow_kmh"]:
+        return "green", "тихо"
+    r = _rel_dir(dfrom, arcs) if arcs else "in"
+    rel = "" if arcs is None else {"in": "в посоката", "cross": "страничен", "back": "в гръб"}[r]
+    if spd > W["red_kmh"] or g > W["gust_red_kmh"] or (r == "back" and spd >= W["back_red_min_kmh"]):
+        return "red", rel
+    if spd > W["green_max_kmh"] or g > W["gust_yellow_kmh"] or r != "in":
+        return "yellow", rel
+    return "green", rel
+
+
+def _wind850_class(spd):
+    if spd > WIND["h_red_kmh"]:
+        return "red"
+    return "yellow" if spd > WIND["h_green_max_kmh"] else "green"
+
+
+def _site_winds(sites, winds, grid, t_list):
+    """Вятър за всеки старт и всеки момент от t_list: (w10, w850) списъци по стартове."""
+    glat, glon = grid
+    tw = np.array([t.timestamp() for t in winds["times"]])
+    out10, out850 = [], []
+    for s in sites:
+        iy = int(np.argmin(np.abs(glat - s["lat"])))
+        ix = int(np.argmin(np.abs(glon - s["lon"])))
+        arcs = _arcs(s.get("dirs", ""))
+        r10, r850 = [], []
+        for t in t_list:
+            k = int(np.argmin(np.abs(tw - t.timestamp())))                 # най-близкият час
+            kg = int(np.searchsorted(tw, t.timestamp() - 1))               # часът, който съдържа t
+            kg = min(kg, len(tw) - 1)
+            if winds.get("u10") is not None:
+                u, v = float(winds["u10"][k, iy, ix]), float(winds["v10"][k, iy, ix])
+                spd = np.hypot(u, v) * 3.6
+                dfrom = (np.degrees(np.arctan2(-u, -v)) + 360) % 360
+                gust = float(winds["gust"][kg, iy, ix]) * 3.6 if winds.get("gust") is not None else None
+                cls, rel = _wind10_class(dfrom, spd, gust, arcs)
+                r10.append({"d": int(round(dfrom)), "s": int(round(spd)),
+                            "g": None if gust is None else int(round(gust)), "c": cls,
+                            "t": f"от {_DIR_NAME[int((dfrom + 11.25) // 22.5) % 16]} {spd:.0f} km/h"
+                                 + ("" if gust is None else f", пориви {gust:.0f}") + (f" — {rel}" if rel else "")})
+            else:
+                r10.append(None)
+            if winds.get("u850") is not None:
+                u, v = float(winds["u850"][k, iy, ix]), float(winds["v850"][k, iy, ix])
+                spd = np.hypot(u, v) * 3.6
+                dfrom = (np.degrees(np.arctan2(-u, -v)) + 360) % 360
+                r850.append({"d": int(round(dfrom)), "s": int(round(spd)), "c": _wind850_class(spd),
+                             "t": f"850 hPa: от {_DIR_NAME[int((dfrom + 11.25) // 22.5) % 16]} {spd:.0f} km/h"})
+            else:
+                r850.append(None)
+        out10.append(r10); out850.append(r850)
+    return out10, out850
+
+
 def _lightning_points(li, lat, lon, step=0.1):
     """Мълниите (LI, 15 мин) събрани в клетки по 0.1° — за символи на картата."""
     if li is None or not (li >= 1).any():
@@ -174,7 +267,7 @@ def _lightning_points(li, lat, lon, step=0.1):
     return [[k[0] * step, k[1] * step, int(v)] for k, v in cells.items()]
 
 
-def export_web(forecast, blended=None, blend_times=None):
+def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=None):
     comp = forecast["last_composite"]
     lat, lon = comp["lat"], comp["lon"]
     t0 = comp["timestamp"]
@@ -257,9 +350,25 @@ def export_web(forecast, blended=None, blend_times=None):
                 c, w = _status(f, li if m == 0 else None, mk, nd)
                 st.append(c); why.append(w)
             # за точките на картата: състояние за всеки кадър (вкл. +4…+6 ч)
-            st_fr = [_status(f, li if m == 0 else None, mk, nd)[0]
-                     for (m, f, _), nd in zip(frames, nodata)]
-            site_out.append({**s, "status": st, "why": why, "status_frames": st_fr})
+            sw = [_status(f, li if m == 0 else None, mk, nd) for (m, f, _), nd in zip(frames, nodata)]
+            site_out.append({**s, "status": st, "why": why,
+                             "status_frames": [c for c, _ in sw], "why_frames": [w for _, w in sw]})
+
+        # Вятър (ICON): за колоните на таблицата и за всеки кадър на картата
+        if winds is not None and wind_grid is not None:
+            try:
+                t_tab = [t0 + dt.timedelta(minutes=m) for m in SITE_LEADS]
+                t_fr = [t0 + dt.timedelta(minutes=m) for m, _, _ in frames]
+                w10, w850 = _site_winds(sites, winds, wind_grid, t_tab)
+                f10, f850 = _site_winds(sites, winds, wind_grid, t_fr)
+                for so, a, b, fa, fb in zip(site_out, w10, w850, f10, f850):
+                    so["w10"], so["w850"] = a, b
+                    so["w10_frames"] = [x["c"] if x else None for x in fa]
+                    so["w850_frames"] = [x["c"] if x else None for x in fb]
+                    so["wtxt_frames"] = ["\n".join(y["t"] for y in (p, q) if y) for p, q in zip(fa, fb)]
+                logger.info(f"  Вятър за стартовете: {len(site_out)} × {len(t_tab)} часа")
+            except Exception as e:
+                logger.warning(f"  Вятър за стартовете: {e}")
         with open(os.path.join(OUT_DIR, "sites.json"), "w", encoding="utf-8") as fo:
             json.dump({"leads_min": SITE_LEADS,
                        "frame_leads_min": [m for m, _, _ in frames],
