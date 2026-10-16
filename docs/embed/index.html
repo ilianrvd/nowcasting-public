@@ -54,6 +54,10 @@
   .note a { color: var(--muted); }
   .ltg { font-size: 15px; line-height: 15px; text-shadow: 0 0 3px #fff; }
   .site-pin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 2px #0008; }
+  .site-w, .wglyph { color: #e8590c; font-weight: 800; font-family: Arial, sans-serif; line-height: 1;
+    text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff; }
+  .site-w { font-size: 16px; width: 16px; text-align: center; }
+  .wglyph { font-size: 14px; display: inline-block; width: 13px; text-align: center; }
   @media (max-width: 600px) { #tlabel { min-width: 0; width: 100%; } th, td { padding: 4px 3px; } }
   .author { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 </style>
@@ -90,8 +94,9 @@
     <button data-t="w850">Вятър ~1500 m</button>
   </div>
   <div class="sub" id="sub-all"><span class="dot green"></span> без пречки &nbsp;
-    <span class="dot yellow"></span> дъжд или неподходящ вятър &nbsp;
-    <span class="dot red"></span> гръмотевици или опасен вятър &nbsp;
+    <span class="dot yellow"></span> дъжд &nbsp;
+    <span class="dot red"></span> гръмотевична клетка &nbsp;
+    <span class="wglyph">W</span> неподходящ вятър (без валеж) &nbsp;
     <span class="dot nodata"></span> няма данни<br><small>валеж + вятър на 10 m; подробности — в другите табове</small></div>
   <div class="sub" id="sub-rain" style="display:none"><span class="dot green"></span> чисто &nbsp;
     <span class="dot yellow"></span> дъжд до <span id="rr">10</span> km &nbsp;
@@ -163,7 +168,9 @@ function drawSites(i) {                 // i = индекс на кадъра н
     const fr = tab === 'w10' ? s.w10_frames : tab === 'w850' ? s.w850_frames
              : tab === 'all' ? allFrames(s).map(x => x[0]) : s.status_frames;
     const st = fr ? fr[i] : s.status[k];
-    const icon = L.divIcon({ className: '', html: `<div class="site-pin" style="background:${COLORS[st]}"></div>`, iconSize: [12, 12] });
+    const icon = st === 'wind'
+      ? L.divIcon({ className: '', html: '<div class="site-w">W</div>', iconSize: [16, 16] })
+      : L.divIcon({ className: '', html: `<div class="site-pin" style="background:${COLORS[st]}"></div>`, iconSize: [12, 12] });
     const f = meta.frames[i];
     const rain = { green: 'чисто', yellow: 'дъжд', red: 'гръмотевична клетка', nodata: 'няма данни' }[s.status_frames ? s.status_frames[i] : ''] || '';
     const whyR = s.why_frames ? s.why_frames[i] : '';
@@ -183,13 +190,14 @@ function drawSites(i) {                 // i = индекс на кадъра н
 
 // „Общо“: по-лошото от валежа и вятъра на 10 m
 const RAIN_TXT = { yellow: 'дъжд', red: 'гръмотевична клетка', nodata: 'няма данни за валежа' };
-function combine(rain, w) {               // → [клас, причина]
+function combine(rain, w) {               // → [клас, причина]; 'wind' = проблемът е само вятърът
   const wc = w ? w.c : null;
-  if (rain === 'red' || wc === 'red')
-    return ['red', rain === 'red' ? RAIN_TXT.red + (wc === 'red' ? '; вятър: ' + w.t : '') : 'вятър: ' + w.t];
-  if (rain === 'yellow' || wc === 'yellow')
-    return ['yellow', [rain === 'yellow' ? RAIN_TXT.yellow : '', wc === 'yellow' ? 'вятър: ' + w.t : ''].filter(Boolean).join('; ')];
-  if (rain === 'nodata') return ['nodata', RAIN_TXT.nodata + (w ? '; вятър: ' + w.t : '')];
+  const wtxt = w ? 'вятър: ' + w.t : '';
+  const bad = c => c === 'red' || c === 'yellow';
+  if (rain === 'red' || rain === 'yellow')            // валежът води; вятърът — в обяснението
+    return [rain, RAIN_TXT[rain] + (bad(wc) ? '; ' + wtxt : '')];
+  if (bad(wc)) return ['wind', wtxt];
+  if (rain === 'nodata') return ['nodata', RAIN_TXT.nodata + (w ? '; ' + wtxt : '')];
   if (!rain) return [null, ''];
   return ['green', 'без пречки' + (w ? ' — ' + w.t : '')];
 }
@@ -204,7 +212,7 @@ function allFrames(s) {                   // вятърът по кадри е �
 
 function cellsFor(s) {                  // [{cls, html, info}] за избрания таб
   if (tab === 'all') return allLeads(s).map(([c, t]) => ({ cls: '', info: t,
-      html: `<span class="dot ${c || 'na'}"></span>` }));
+      html: c === 'wind' ? '<span class="wglyph">W</span>' : `<span class="dot ${c || 'na'}"></span>` }));
   if (tab === 'rain') return s.status.map((st, i) => ({ cls: '', info: (s.why && s.why[i]) || '',
       html: `<span class="dot ${st || 'na'}"></span>` }));
   const w = tab === 'w10' ? s.w10 : s.w850;
@@ -221,7 +229,7 @@ function drawTable() {
     `<th>${i === 0 ? 'сега' : t}</th>`).join('') + '</tr>';
   const cls = s => tab === 'all' ? allLeads(s).map(x => x[0]) : tab === 'rain' ? s.status
                    : ((tab === 'w10' ? s.w10 : s.w850) || []).map(x => x && x.c);
-  const rank = s => { const c = (cls(s) || []).slice(0, 4); return c.includes('red') ? 0 : c.includes('yellow') ? 1 : 2; };
+  const rank = s => { const c = (cls(s) || []).slice(0, 4); return c.includes('red') ? 0 : (c.includes('yellow') || c.includes('wind')) ? 1 : 2; };
   const rows = sites.sites.filter(s => region === 'всички' || s.region === region)
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'bg'));
   body.innerHTML = rows.map((s, r) => `<tr><td data-lat="${s.lat}" data-lon="${s.lon}">${s.name}` +
@@ -251,7 +259,7 @@ function drawTabs() {
   });
   ['all', 'rain', 'w10', 'w850'].forEach(t => document.getElementById('sub-' + t).style.display = t === tab ? '' : 'none');
   document.getElementById('pinlbl').textContent =
-    'Точки: ' + { all: 'общо (валеж + вятър)', rain: 'валеж', w10: 'вятър 10 m', w850: 'вятър ~1500 m' }[tab];
+    'Точки: ' + { all: '● валеж/буря · W вятър', rain: 'валеж', w10: 'вятър 10 m', w850: 'вятър ~1500 m' }[tab];
 }
 
 function drawFilters() {
