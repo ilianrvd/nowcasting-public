@@ -24,24 +24,35 @@ RADAR_COLORS = [
 ]
 RADAR_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70]
 
-# Посочване на източниците (RainViewer го изисква изрично)
+# Посочване на източниците — във формата, който всеки изисква:
+#   EUMETSAT Data Policy, чл. 6.3: „[Contains modified] EUMETSAT [data] [година]“ (Core данни, CC BY 4.0;
+#     SAF продуктите, вкл. H SAF H40B, и производните LI продукти са Core);
+#   H SAF: „obtained from the H SAF operated by EUMETSAT“;
+#   DWD Open Data: CC BY 4.0, „Datenbasis: Deutscher Wetterdienst“ + отбелязване на обработката;
+#   ANM România — отворени данни (набор с висока стойност по Регл. (ЕС) 2023/138).
+_YEAR = dt.datetime.utcnow().year
+EUMETSAT_TXT = f"Contains modified EUMETSAT data {_YEAR} (MTG LI; H SAF H40B, obtained from the H SAF operated by EUMETSAT)"
+DWD_TXT = "Datenbasis: Deutscher Wetterdienst, ICON-EU (обработени)"
+CC_BY = ("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/deed.bg")
+
 CREDITS = {
-    "romania_composite": "радар: NMA România",
+    "romania_composite": "радар: ANM România",
     "iabg_GCD": "радар: ИАБГ",
     "iabg_STS": "радар: ИАБГ",
     "rainviewer_TR34": "радар Истанбул: MGM, Weather data by RainViewer (rainviewer.com)",
 }
 # Същото за GitHub Pages — с линкове
 CREDIT_LINKS = {
-    "romania_composite": ("NMA România", "https://www.meteoromania.ro/"),
-    "iabg_GCD": ("ИАБГ", "https://www.weathermod-bg.eu/"),
-    "iabg_STS": ("ИАБГ", "https://www.weathermod-bg.eu/"),
-    "rainviewer_TR34": ("MGM (Истанбул) — Weather data by RainViewer", "https://www.rainviewer.com/"),
+    "romania_composite": ("радар: ANM România", "https://www.meteoromania.ro/"),
+    "iabg_GCD": ("радар: ИАБГ", "https://www.weathermod-bg.eu/"),
+    "iabg_STS": ("радар: ИАБГ", "https://www.weathermod-bg.eu/"),
+    "rainviewer_TR34": ("радар Истанбул: MGM — Weather data by RainViewer", "https://www.rainviewer.com/"),
 }
 FIXED_LINKS = [
-    ("EUMETSAT (MTG Lightning Imager, H SAF H40B)", "https://view.eumetsat.int/"),
-    ("DWD ICON-EU", "https://opendata.dwd.de/"),
+    (EUMETSAT_TXT, "https://www.eumetsat.int/"),
+    (DWD_TXT, "https://opendata.dwd.de/"),
 ]
+OPEN_METEO = ("Weather data by Open-Meteo.com", "https://open-meteo.com/")
 
 
 def _add_credits(fig, comp, extra=()):
@@ -165,8 +176,7 @@ def plot_nowcast(forecast, output_path=None):
     plt.suptitle(f'NOWCASTING PUBLIC — {forecast.get("method", "S-PROG")}{_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
-    _add_credits(fig, comp, (["сателит: EUMETSAT / H SAF H40B"] if comp.get("sat_on_map") else [])
-                 + ["мълнии: EUMETSAT MTG LI"])
+    _add_credits(fig, comp, [EUMETSAT_TXT, "CC BY 4.0"])
 
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "nowcast.png")
@@ -234,8 +244,9 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
     plt.suptitle(f'BLENDED FORECAST — Radar + ICON-EU (0–6h){_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
-    _add_credits(fig, comp, (["сателит: EUMETSAT / H SAF H40B"] if comp.get("sat_on_map") else [])
-                 + ["модел: DWD ICON-EU"])
+    _add_credits(fig, comp, [EUMETSAT_TXT,
+                             OPEN_METEO[0] if comp.get("icon_src") == "open-meteo" else DWD_TXT,
+                             "CC BY 4.0"])
 
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "blended.png")
@@ -253,7 +264,10 @@ def _credit_links(comp):
             name, url = CREDIT_LINKS[s]
             out.append({"name": name, "url": url})
             seen.add(name)
-    out += [{"name": n, "url": u} for n, u in FIXED_LINKS]
+    fixed = list(FIXED_LINKS)
+    if comp.get("icon_src") == "open-meteo":          # резервът за ICON
+        fixed[1] = OPEN_METEO
+    out += [{"name": n, "url": u} for n, u in fixed + [CC_BY]]
     return out
 
 

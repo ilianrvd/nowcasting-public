@@ -188,6 +188,8 @@ def main():
             try:
                 from src.ingest.icon_eu import fetch_icon_grid
                 icon_data = fetch_icon_grid()
+                if icon_data is not None:
+                    composites[-1]["icon_src"] = "open-meteo"   # за посочването на източника
             except Exception as e:
                 log.warning(f"  ICON Open-Meteo: {e}")
 
