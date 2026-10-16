@@ -52,12 +52,13 @@
   .filters button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .note { font-size: .78rem; color: var(--muted); margin-top: 14px; line-height: 1.45; }
   .note a { color: var(--muted); }
-  .ltg { font-size: 15px; line-height: 15px; text-shadow: 0 0 3px #fff; }
+  .ltg svg { display: block; }
+  .ltgleg svg { display: inline-block; vertical-align: -1px; }
   .site-pin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 2px #0008; }
-  .site-w, .wglyph { color: #e8590c; font-weight: 800; font-family: Arial, sans-serif; line-height: 1;
+  .site-w, .wglyph { color: #3d434a; font-weight: 800; font-family: Arial, sans-serif; line-height: 1;
     text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff; }
-  .site-w { font-size: 16px; width: 16px; text-align: center; }
-  .wglyph { font-size: 14px; display: inline-block; width: 13px; text-align: center; }
+  .site-w { font-size: 12px; width: 12px; text-align: center; }
+  .wglyph { font-size: 11px; display: inline-block; width: 11px; text-align: center; }
   @media (max-width: 600px) { #tlabel { min-width: 0; width: 100%; } th, td { padding: 4px 3px; } }
   .author { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 </style>
@@ -81,7 +82,7 @@
     <span><i style="background:#00C800"></i>умерен</span>
     <span><i style="background:#FFFF00"></i>силен</span>
     <span><i style="background:#FF0000"></i>много силен / градушка</span>
-    <span>⚡ мълнии (последните 15 мин)</span>
+    <span><span class="ltgleg"></span> мълнии (последните 15 мин)</span>
     <span id="ndleg" style="display:none"><i class="nodata"></i>няма данни (без радар и сателит)</span>
   </div>
   <div class="motion" id="motion"></div>
@@ -96,27 +97,28 @@
   <div class="sub" id="sub-all"><span class="dot green"></span> без пречки &nbsp;
     <span class="dot yellow"></span> дъжд &nbsp;
     <span class="dot red"></span> гръмотевична клетка &nbsp;
-    <span class="wglyph">W</span> неподходящ вятър (без валеж) &nbsp;
+    <span class="wglyph">W</span> силен вятър <span class="thrW"></span> &nbsp;
     <span class="dot nodata"></span> няма данни<br><small>валеж + вятър на 10 m; подробности — в другите табове</small></div>
   <div class="sub" id="sub-rain" style="display:none"><span class="dot green"></span> чисто &nbsp;
     <span class="dot yellow"></span> дъжд до <span id="rr">10</span> km &nbsp;
     <span class="dot red"></span> гръмотевична клетка до <span id="rc">20</span> km &nbsp;
     <span class="dot nodata"></span> няма данни</div>
-  <div class="sub" id="sub-w10" style="display:none">↓ накъдето духа · km/h <small>(пориви)</small> · модел ICON<br>
-    <span class="dot green"></span> подходящ &nbsp; <span class="dot yellow"></span> страничен / силен &nbsp;
-    <span class="dot red"></span> в гръб / опасен</div>
-  <div class="sub" id="sub-w850" style="display:none">↓ накъдето духа · km/h · 850 hPa (~1500 m), модел ICON<br>
-    <span class="dot green"></span> до 25 &nbsp; <span class="dot yellow"></span> 25–40 &nbsp; <span class="dot red"></span> над 40 km/h</div>
+  <div class="sub" id="sub-w10" style="display:none">↓ накъдето духа · m/s <small>(пориви)</small> · модел ICON<br>
+    <span class="dot green"></span> в посоката &nbsp; <span class="dot yellow"></span> страничен / в гръб &nbsp;
+    <span class="dot red"></span> силен <span class="thrW"></span></div>
+  <div class="sub" id="sub-w850" style="display:none">↓ накъдето духа · m/s · 850 hPa (~1500 m), модел ICON<br>
+    <span id="thr850"><span class="dot green"></span> до 7 &nbsp; <span class="dot yellow"></span> 8–11 &nbsp; <span class="dot red"></span> над 11 m/s</span></div>
   <div class="filters" id="filters"></div>
   <table id="sites"><thead></thead><tbody></tbody></table>
   <div id="detail"></div>
 
   <div class="note">
-    Информативен продукт, <b>не е официална прогноза</b>. До +1 ч прогнозата е по радар и сателит,
+    Информативен продукт, генериран автоматично — <b>не е официална прогноза</b> и не се създава
+    и не се контролира от специалист. До +1 ч прогнозата е по радар и сателит,
     след това постепенно по модела ICON — точността намалява с времето. Решението за полет е на пилота.
     Обновява се на ~20 мин между 06 и 21 ч.<br>
     Данни: <span id="credits">—</span>
-    <div class="author">Автор: <b>Илиан Манафов</b> · разработено с помощта на Claude (Anthropic)</div>
+    <div class="author">За контакт: <a href="mailto:ilian.manafov@bulatsa.com">ilian.manafov@bulatsa.com</a> · разработено с помощта на Claude (Anthropic)</div>
   </div>
 </div>
 
@@ -124,6 +126,10 @@
 <script>
 const DATA = 'data/';
 const COLORS = { green: '#2e9e44', yellow: '#e8b500', red: '#d7301f', nodata: '#8a939e', null: '#cfd5db' };
+const LTG_SVG = '<svg width="8" height="10" viewBox="0 0 8 10">' +
+  '<polyline points="5.5,0.5 1.5,5.5 5,4.8 2.5,9.5" fill="none" stroke="#fff" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>' +
+  '<polyline points="5.5,0.5 1.5,5.5 5,4.8 2.5,9.5" fill="none" stroke="#e67700" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+document.querySelectorAll('.ltgleg').forEach(e => e.innerHTML = LTG_SVG);
 let meta, sites, overlay, ltgLayer, siteLayer, idx = 0, timer = null, region = 'всички', tab = 'all';
 
 const map = L.map('map', { zoomControl: true, attributionControl: true });
@@ -193,14 +199,22 @@ const RAIN_TXT = { yellow: 'дъжд', red: 'гръмотевична клетк
 function combine(rain, w) {               // → [клас, причина]; 'wind' = проблемът е само вятърът
   const wc = w ? w.c : null;
   const wtxt = w ? 'вятър: ' + w.t : '';
-  const bad = c => c === 'red' || c === 'yellow';
   if (rain === 'red' || rain === 'yellow')            // валежът води; вятърът — в обяснението
-    return [rain, RAIN_TXT[rain] + (bad(wc) ? '; ' + wtxt : '')];
-  if (bad(wc)) return ['wind', wtxt];
+    return [rain, RAIN_TXT[rain] + (w ? '; ' + wtxt : '')];
+  if (wc === 'red') return ['wind', wtxt];            // W — само при силен вятър/пориви
   if (rain === 'nodata') return ['nodata', RAIN_TXT.nodata + (w ? '; ' + wtxt : '')];
   if (!rain) return [null, ''];
   return ['green', 'без пречки' + (w ? ' — ' + w.t : '')];
 }
+function drawThresholds(t) {
+  if (!t) return;
+  const D = c => `<span class="dot ${c}"></span>`;
+  document.querySelectorAll('.thrW').forEach(e =>
+    e.textContent = `(над ${t.red_ms} m/s или пориви над ${t.gust_red_ms})`);
+  document.getElementById('thr850').innerHTML =
+    `${D('green')} до ${t.h_green_max_ms} &nbsp; ${D('yellow')} ${t.h_green_max_ms + 1}–${t.h_red_ms} &nbsp; ${D('red')} над ${t.h_red_ms} m/s`;
+}
+
 function allLeads(s) { return s.status.map((r, i) => combine(r, s.w10 && s.w10[i])); }
 function allFrames(s) {                   // вятърът по кадри е само клас — текстът е в wtxt_frames
   return (s.status_frames || []).map((r, i) => {
@@ -295,15 +309,16 @@ async function load() {
 
   if (ltgLayer) ltgLayer.remove();       // при опресняване: махаме мълниите от предния пуск
   ltgLayer = L.layerGroup(meta.lightning.map(p => L.marker([p[0], p[1]], {
-    icon: L.divIcon({ className: 'ltg', html: '⚡', iconSize: [14, 14] }), interactive: false })));
+    icon: L.divIcon({ className: 'ltg', html: LTG_SVG, iconSize: [8, 10] }), interactive: false })));
 
   document.getElementById('ndleg').style.display = meta.frames.some(f => f.nodata) ? '' : 'none';
   document.getElementById('motion').textContent = meta.motion.length ?
-    'Движение: ' + meta.motion.map(m => `${m.region} → ${m.dir} ${m.kmh} km/h`).join(' · ') : '';
+    'Движение: ' + meta.motion.map(m => `${m.region} → ${m.dir} ${m.ms != null ? m.ms : Math.round(m.kmh / 3.6)} m/s`).join(' · ') : '';
 
   if (sites) {
     document.getElementById('rr').textContent = sites.radius_rain_km;
     document.getElementById('rc').textContent = sites.radius_conv_km;
+    drawThresholds(sites.wind_thr);
     drawTabs(); drawFilters(); drawTable();
   }
   idx = Math.min(idx, meta.frames.length - 1);   // новият пуск може да има по-малко кадри

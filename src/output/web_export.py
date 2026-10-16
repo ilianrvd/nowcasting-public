@@ -198,23 +198,26 @@ def _rel_dir(x: float, arcs) -> str:
 
 
 def _wind10_class(dfrom, spd, gust, arcs):
+    """червено: над red_ms или пориви над gust_red_ms; жълто: страничен / в гръб; иначе зелено."""
     W = WIND
-    g = gust if gust is not None else 0.0
-    if spd < W["calm_kmh"] and g <= W["gust_yellow_kmh"]:
-        return "green", "тихо"
+    spd = round(spd)                       # класът — по показаното цяло число m/s
+    g = round(gust) if gust is not None else 0
     r = _rel_dir(dfrom, arcs) if arcs else "in"
     rel = "" if arcs is None else {"in": "в посоката", "cross": "страничен", "back": "в гръб"}[r]
-    if spd > W["red_kmh"] or g > W["gust_red_kmh"] or (r == "back" and spd >= W["back_red_min_kmh"]):
+    if spd > W["red_ms"] or g > W["gust_red_ms"]:
         return "red", rel
-    if spd > W["green_max_kmh"] or g > W["gust_yellow_kmh"] or r != "in":
+    if spd <= W["calm_ms"]:
+        return "green", "тихо"
+    if r != "in":
         return "yellow", rel
     return "green", rel
 
 
 def _wind850_class(spd):
-    if spd > WIND["h_red_kmh"]:
+    spd = round(spd)
+    if spd > WIND["h_red_ms"]:
         return "red"
-    return "yellow" if spd > WIND["h_green_max_kmh"] else "green"
+    return "yellow" if spd > WIND["h_green_max_ms"] else "green"
 
 
 def _site_winds(sites, winds, grid, t_list):
@@ -233,22 +236,22 @@ def _site_winds(sites, winds, grid, t_list):
             kg = min(kg, len(tw) - 1)
             if winds.get("u10") is not None:
                 u, v = float(winds["u10"][k, iy, ix]), float(winds["v10"][k, iy, ix])
-                spd = np.hypot(u, v) * 3.6
+                spd = float(np.hypot(u, v))
                 dfrom = (np.degrees(np.arctan2(-u, -v)) + 360) % 360
-                gust = float(winds["gust"][kg, iy, ix]) * 3.6 if winds.get("gust") is not None else None
+                gust = float(winds["gust"][kg, iy, ix]) if winds.get("gust") is not None else None
                 cls, rel = _wind10_class(dfrom, spd, gust, arcs)
                 r10.append({"d": int(round(dfrom)), "s": int(round(spd)),
                             "g": None if gust is None else int(round(gust)), "c": cls,
-                            "t": f"от {_DIR_NAME[int((dfrom + 11.25) // 22.5) % 16]} {spd:.0f} km/h"
+                            "t": f"от {_DIR_NAME[int((dfrom + 11.25) // 22.5) % 16]} {spd:.0f} m/s"
                                  + ("" if gust is None else f", пориви {gust:.0f}") + (f" — {rel}" if rel else "")})
             else:
                 r10.append(None)
             if winds.get("u850") is not None:
                 u, v = float(winds["u850"][k, iy, ix]), float(winds["v850"][k, iy, ix])
-                spd = np.hypot(u, v) * 3.6
+                spd = float(np.hypot(u, v))
                 dfrom = (np.degrees(np.arctan2(-u, -v)) + 360) % 360
                 r850.append({"d": int(round(dfrom)), "s": int(round(spd)), "c": _wind850_class(spd),
-                             "t": f"850 hPa: от {_DIR_NAME[int((dfrom + 11.25) // 22.5) % 16]} {spd:.0f} km/h"})
+                             "t": f"850 hPa: от {_DIR_NAME[int((dfrom + 11.25) // 22.5) % 16]} {spd:.0f} m/s"})
             else:
                 r850.append(None)
         out10.append(r10); out850.append(r850)
@@ -374,6 +377,7 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
                        "frame_leads_min": [m for m, _, _ in frames],
                        "leads_local": [_local(t0 + dt.timedelta(minutes=m)) for m in SITE_LEADS],
                        "radius_conv_km": R_CONV_KM, "radius_rain_km": R_RAIN_KM,
+                       "wind_thr": {k: v for k, v in WIND.items() if k.endswith("_ms")},
                        "sites": site_out}, fo, ensure_ascii=False)
         n_red = sum(1 for s in site_out if "red" in s["status"][:4])
         logger.info(f"  Стартове: {len(site_out)}, с 🔴 до +90 мин: {n_red}")
@@ -391,7 +395,7 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
         "method": method,
         "bounds": [[float(lat[0]), float(lon[0])], [float(lat[-1]), float(lon[-1])]],
         "frames": meta_frames,
-        "motion": [{"region": r["name"], "dir": r["dir_txt"], "kmh": round(r["kmh"]),
+        "motion": [{"region": r["name"], "dir": r["dir_txt"], "ms": round(r["kmh"] / 3.6),
                     "src": r["src"]} for r in mi.get("regions", [])],
         "lightning": _lightning_points(li, lat, lon),
         "sources": comp.get("sources", []),
