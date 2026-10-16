@@ -31,15 +31,20 @@ def _latest_time(cov: str, timeout: float = 90) -> dt.datetime:
     return dt.datetime.fromisoformat(end.replace("Z", "+00:00"))
 
 
-def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120):
-    """GetCoverage → (bands, rows, cols), lat_1d (възходящо), lon_1d."""
+def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120, band: str = None):
+    """GetCoverage → (bands, rows, cols), lat_1d (възходящо), lon_1d.
+    Сървърът по подразбиране праща некомпресиран float64 на плочки 320×512 — за нашата
+    зона ~10 MB, които на GitHub често се прекъсват. С Deflate и само нужния канал е ~10 KB."""
     import tifffile
     ts = t.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     params = [("service", "WCS"), ("version", "2.0.1"), ("request", "GetCoverage"),
               ("coverageId", cov), ("format", "image/tiff"),
               ("subset", f"Lat({BBOX_LAT[0]},{BBOX_LAT[1]})"),
               ("subset", f"Long({BBOX_LON[0]},{BBOX_LON[1]})"),
-              ("subset", f'time("{ts}")')]
+              ("subset", f'time("{ts}")'),
+              ("geotiff:compression", "Deflate")]
+    if band:
+        params.append(("rangesubset", band))
     r = requests.get(WCS, params=params, timeout=timeout)   # без общата сесия — безопасно в нишки
     r.raise_for_status()
     if "xml" in r.headers.get("Content-Type", ""):
@@ -72,6 +77,7 @@ def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120):
     return arr, lat.astype(np.float64), lon.astype(np.float64)
 
 
+H40B_BAND = "Instantaneous rain rate"      # вторият канал (Quality index) не ни трябва
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache", "h40b_last.npz")
 
 
@@ -127,10 +133,15 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60,
         age = (now - t).total_seconds() / 60
         if age > max_age_min:
             break
-        try:
-            arr, lat, lon = _get_coverage("mtg_fd__h40b", t, timeout=45)
-        except Exception as e:
-            last_err = e
+        arr = None
+        for band in (H40B_BAND, H40B_BAND, None):   # 2 опита само с валежа, после и двата канала
+            try:
+                arr, lat, lon = _get_coverage("mtg_fd__h40b", t, timeout=45, band=band)
+                break
+            except Exception as e:
+                last_err = e
+                logger.info(f"  H40B {t:%H:%M}: {type(e).__name__}: {str(e)[:80]}")
+        if arr is None:
             continue
         rain = arr[0]
         rain[(rain < 0) | ~np.isfinite(rain)] = np.nan
@@ -147,7 +158,7 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60,
         _h40b_save_cache(d)
         return d
 
-    logger.warning(f"H40B недостъпен ({_time.time() - t0:.0f} s): {str(last_err)[:100]}")
+    logger.warning(f"H40B недостъпен ({how}, {_time.time() - t0:.0f} s): {str(last_err)[:100]}")
     return _h40b_load_cache(now, cache_max_age_min)
 
 
