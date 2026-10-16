@@ -60,6 +60,12 @@ def read_romania_composite(filepath: str) -> dict | None:
         dbz = raw * gain + offset
         dbz[raw == nodata]   = np.nan
         dbz[raw == undetect] = np.nan
+        # Нефизични стойности (напр. сурово 254 = 95.5 dBZ, точно под nodata) — флаг/повреда,
+        # не валеж. Без това се изрязват до DBZ_MAX и минават за силно ядро.
+        bad = dbz > 75.0
+        if bad.any():
+            logger.warning(f"  {int(bad.sum())} px > 75 dBZ (max {np.nanmax(dbz):.1f}) — изключени като дефект")
+            dbz[bad] = np.nan
 
     # AEQD → lat/lon с pyproj
     transformer = Transformer.from_crs(projdef, "EPSG:4326", always_xy=True)
