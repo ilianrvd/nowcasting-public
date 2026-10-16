@@ -92,11 +92,17 @@ def _clean(dbz):
     return out
 
 
-def _save_png(dbz, lat, path):
+def _save_png(dbz, lat, path, nodata=None):
     from PIL import Image
     d = _to_mercator_rows(dbz, lat)          # dbz вече е почистено (_clean)
     img = np.zeros(d.shape + (4,), dtype=np.uint8)
     ok = np.isfinite(d)
+    if nodata is not None:                   # сива щриховка там, където нямаме данни
+        nd = _to_mercator_rows(nodata.astype(np.uint8), lat).astype(bool) & ~ok
+        yy, xx = np.indices(nd.shape)
+        stripe = ((yy + xx) % 10) < 3
+        img[nd & stripe] = (110, 118, 128, 120)
+        img[nd & ~stripe] = (110, 118, 128, 35)
     k = np.clip(np.digitize(np.where(ok, d, 0), LEVELS) - 1, 0, len(COLORS) - 1)
     img[ok] = _RGBA[k[ok]]
     Image.fromarray(img, "RGBA").save(path, optimize=True)
@@ -135,8 +141,9 @@ def _disk_masks(sites, lat, lon):
     return out
 
 
-def _status(dbz, ltg, masks):
-    """Състояние на един старт за едно поле: ('red'/'yellow'/'green', причина)."""
+def _status(dbz, ltg, masks, nodata=None):
+    """Състояние на един старт за едно поле: ('red'/'yellow'/'green'/'nodata', причина).
+    'nodata': нищо не се вижда, но над половината от кръга е без радар и без сателит."""
     conv_idx, rain_idx = masks
     v = np.nan_to_num(dbz[conv_idx], nan=0.0)
     r = np.nan_to_num(dbz[rain_idx], nan=0.0)
@@ -148,6 +155,10 @@ def _status(dbz, ltg, masks):
         return "red", why
     if frac20 >= RAIN_MIN_FRAC:
         return "yellow", why
+    if nodata is not None:
+        nd = float(nodata[rain_idx].mean()) if rain_idx[0].size else 0.0
+        if nd > 0.5:
+            return "nodata", why + f", без данни {nd:.0%}"
     return "green", why
 
 
@@ -199,32 +210,55 @@ def export_web(forecast, blended=None, blend_times=None):
             frames.append((m, f, "радар → модел" if m <= 150 else "модел ICON"))
     frames = [(m, _clean(f), src) for m, f, src in frames if f is not None]
 
+    # „Няма данни“: без радар и без сателит, докато ICON още не е поел (тегло < 50%).
+    # Така празното място не изглежда като „сухо“, а валежът на модела не изскача на +10 мин.
+    from src.blend.blending import blend_weights
+    covered = comp.get("coverage")
+    if covered is None:
+        covered = np.isfinite(comp["dbz"])
+    nd_zone = None if comp.get("sat_on_map") else ~np.asarray(covered, dtype=bool)
+    horizon = (fc_times[-1] - t0).total_seconds() / 60 if fc_times else 0.0
+
+    def nodata_for(m):
+        if nd_zone is None or not nd_zone.any():
+            return None
+        if m == 0:
+            return nd_zone
+        return nd_zone if blend_weights(m, radar_horizon=horizon)[1] < 0.5 else None
+
+    nodata = [nodata_for(m) for m, _, _ in frames]
+    if nodata[0] is not None:
+        logger.info(f"  Без радар и сателит: {nd_zone.mean():.0%} от домейна → „няма данни“ "
+                    f"до +{max(m for (m, _, _), n in zip(frames, nodata) if n is not None)} мин")
+
     meta_frames = []
     for i, (m, f, src) in enumerate(frames):
         name = f"f_{i:02d}.png"
-        _save_png(f, lat, os.path.join(OUT_DIR, name))
+        _save_png(f, lat, os.path.join(OUT_DIR, name), nodata[i])
         t = t0 + dt.timedelta(minutes=m)
         meta_frames.append({"file": name, "lead_min": m, "time_utc": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            "time_local": _local(t), "source": src})
+                            "time_local": _local(t), "source": src,
+                            "nodata": nodata[i] is not None})
 
     # ── Стартове ──────────────────────────────────────────
     sites = load_sites()
     li = comp.get("li_raw")
     if sites:
         masks = _disk_masks(sites, lat, lon)
-        by_lead = {m: f for m, f, _ in frames}
+        by_lead = {m: (f, nd) for (m, f, _), nd in zip(frames, nodata)}
         site_out = []
         for s, mk in zip(sites, masks):
             st, why = [], []
             for m in SITE_LEADS:
-                f = by_lead.get(m)
-                if f is None:
+                if m not in by_lead:
                     st.append(None); why.append(None)
                     continue
-                c, w = _status(f, li if m == 0 else None, mk)
+                f, nd = by_lead[m]
+                c, w = _status(f, li if m == 0 else None, mk, nd)
                 st.append(c); why.append(w)
             # за точките на картата: състояние за всеки кадър (вкл. +4…+6 ч)
-            st_fr = [_status(f, li if m == 0 else None, mk)[0] for m, f, _ in frames]
+            st_fr = [_status(f, li if m == 0 else None, mk, nd)[0]
+                     for (m, f, _), nd in zip(frames, nodata)]
             site_out.append({**s, "status": st, "why": why, "status_frames": st_fr})
         with open(os.path.join(OUT_DIR, "sites.json"), "w", encoding="utf-8") as fo:
             json.dump({"leads_min": SITE_LEADS,

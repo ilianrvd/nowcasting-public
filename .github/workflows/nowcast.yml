@@ -51,6 +51,14 @@ jobs:
         run: |
           python -c "import cfgrib, eccodes, xarray; print('eccodes', eccodes.codes_get_api_version(), '| cfgrib', cfgrib.__version__, '| xarray', xarray.__version__)"
 
+      # Последният успешен H40B между пусканията — резерв, ако EUMETView не отговори
+      - name: H40B cache
+        uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: h40b-${{ github.run_id }}
+          restore-keys: h40b-
+
       - name: Run nowcasting
         run: |
           python run_nowcast.py

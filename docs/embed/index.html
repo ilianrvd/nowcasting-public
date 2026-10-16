@@ -38,6 +38,7 @@
   .dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; }
   .green { background: var(--green); } .yellow { background: var(--yellow); } .red { background: var(--red); }
   .na { background: #cfd5db; }
+  .nodata { background: repeating-linear-gradient(45deg, #8a939e 0 3px, #d5dae0 3px 6px); }
   .filters { margin: 14px 0 6px; display: flex; gap: 6px; flex-wrap: wrap; }
   .filters button { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 3px 10px; font-size: .82rem; cursor: pointer; }
   .filters button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -67,13 +68,15 @@
     <span><i style="background:#FFFF00"></i>силен</span>
     <span><i style="background:#FF0000"></i>много силен / градушка</span>
     <span>⚡ мълнии (последните 15 мин)</span>
+    <span id="ndleg" style="display:none"><i class="nodata"></i>няма данни (без радар и сателит)</span>
   </div>
   <div class="motion" id="motion"></div>
 
   <h2 style="font-size:1rem;margin:16px 0 0">Стартове</h2>
   <div class="sub"><span class="dot green"></span> чисто &nbsp;
     <span class="dot yellow"></span> дъжд до <span id="rr">10</span> km &nbsp;
-    <span class="dot red"></span> гръмотевична клетка до <span id="rc">20</span> km</div>
+    <span class="dot red"></span> гръмотевична клетка до <span id="rc">20</span> km &nbsp;
+    <span class="dot nodata"></span> няма данни</div>
   <div class="filters" id="filters"></div>
   <table id="sites"><thead></thead><tbody></tbody></table>
 
@@ -89,7 +92,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const DATA = 'data/';
-const COLORS = { green: '#2e9e44', yellow: '#e8b500', red: '#d7301f', null: '#cfd5db' };
+const COLORS = { green: '#2e9e44', yellow: '#e8b500', red: '#d7301f', nodata: '#8a939e', null: '#cfd5db' };
 let meta, sites, overlay, ltgLayer, siteLayer, idx = 0, timer = null, region = 'всички';
 
 const map = L.map('map', { zoomControl: true, attributionControl: true });
@@ -190,6 +193,7 @@ async function load() {
   ltgLayer = L.layerGroup(meta.lightning.map(p => L.marker([p[0], p[1]], {
     icon: L.divIcon({ className: 'ltg', html: '⚡', iconSize: [14, 14] }), interactive: false })));
 
+  document.getElementById('ndleg').style.display = meta.frames.some(f => f.nodata) ? '' : 'none';
   document.getElementById('motion').textContent = meta.motion.length ?
     'Движение: ' + meta.motion.map(m => `${m.region} → ${m.dir} ${m.kmh} km/h`).join(' · ') : '';
 

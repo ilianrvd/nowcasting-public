@@ -13,8 +13,10 @@ Blend мрежата е ФИКСИРАНА: 72 стъпки × 5 мин = 360 м
   cov_w = 1 навътре в радарното покритие, плавно до 0 към ръба, 0 извън.
   - Със сателит: Z_obs = cov_w*Z_radar + (1-cov_w)*Z_sat(T)
     (H40B, преместен по вектора на движението от своя час до T).
-  - Без сателит: радарното тегло е rw*cov_w, ICON поема останалото —
-    т.е. извън покритието ICON е 100% още от +0 мин.
+  - Без сателит: извън покритието ICON влиза със същото тегло iw(T) като навсякъде
+    (0% в началото → 100% след радарния хоризонт), а не 100% от +0 — иначе на +10 мин
+    „изскача“ валежът на модела там, където наблюдението е празно. Докато iw < 0.5,
+    зоната се показва като „няма данни“ на страницата (web_export).
 
 ICON → dBZ (v7, 13.10.2026):
   ОБЩ валеж за часа (слоест + конвективен) → фон, чист Z-R
@@ -160,7 +162,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
     Radar nowcast + ICON върху фиксирана 5-минутна blend ос (360 мин).
     Радарният кадър за всяка целева минута се избира ПО ВРЕМЕ.
     coverage_w: тегло на радарното покритие по пиксели (None = навсякъде 1).
-    sat_layer:  SatelliteLayer за зоните без радар (None = там ICON от +0).
+    sat_layer:  SatelliteLayer за зоните без радар (None = там само ICON с тегло iw(T)).
     """
     blend_step = 5
     n_total = BLEND["n_steps"]          # 72 → 360 мин
@@ -193,7 +195,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         no_radar = float((coverage_w < 0.5).mean())
         src = (f"сателит H40B ({sat_layer.time:%H:%M} UTC, "
                f"{(ref_time - sat_layer.time).total_seconds() / 60:.0f} мин преди радара)"
-               if sat_layer is not None else "ICON от +0 мин")
+               if sat_layer is not None else "няма сателит → ICON постепенно, до тогава „няма данни“")
         logger.info(f"  Без радар: {no_radar:.0%} от домейна → {src}")
         if sat_layer is not None:
             z0 = sat_layer.z_at(ref_time)
@@ -223,8 +225,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                 iw = 1.0
 
         # ── ICON ─────────────────────────────────────────
-        # При частично покритие ICON трябва и докато rw=100% (за зоните без радар)
-        need_icon = iw > 0 or (use_cov and rw > 0 and sat_layer is None)
+        need_icon = iw > 0
         if need_icon and icon_data is not None:
             z_icon = dbz_to_z(interpolate_icon(target_time, icon_data,
                                                target_lat, target_lon))
@@ -239,8 +240,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                 z_obs = coverage_w * z_radar + (1.0 - coverage_w) * sat_layer.z_at(target_time)
                 z_blend = rw * z_obs + iw * z_icon
             elif icon_data is not None:
-                w_r = rw * coverage_w
-                z_blend = w_r * z_radar + (1.0 - w_r) * z_icon
+                z_blend = rw * coverage_w * z_radar + iw * z_icon
             else:
                 z_blend = rw * coverage_w * z_radar
         else:

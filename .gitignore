@@ -10,3 +10,4 @@ data/output/
 docs/maps/*.png
 docs/maps/meta.json
 docs/embed/data/
+data/cache/

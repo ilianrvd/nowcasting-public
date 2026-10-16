@@ -79,6 +79,14 @@ def main():
             except Exception:
                 pass
 
+    # H40B: във фон от самото начало — EUMETView е бавен, а трябва чак във фаза 5a
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=1)
+    h40b_future = None
+    if not args.no_satellite:
+        from src.ingest.eumetview import fetch_h40b
+        h40b_future = pool.submit(fetch_h40b)
+
     # ── 1. INGEST РУМЪНИЯ ─────────────────────────────────
     all_frames = {}
 
@@ -129,13 +137,7 @@ def main():
     total_frames = sum(len(v) for v in all_frames.values())
     log.info(f"  Общо: {total_frames} frames от {len(all_frames)} източника")
 
-    # ── 3. H40B (паралелно, EUMETView е бавен) + МЪЛНИИ ──
-    from concurrent.futures import ThreadPoolExecutor
-    pool = ThreadPoolExecutor(max_workers=1)
-    h40b_future = None
-    if not args.no_satellite:
-        from src.ingest.eumetview import fetch_h40b
-        h40b_future = pool.submit(fetch_h40b)
+    # ── 3. МЪЛНИИ (H40B вече се тегли във фон от началото на пуска) ──
 
     # Отделните 5-мин кадри за ~40 мин назад: всеки от последните 3 композита
     # (на 10 мин) взима мълниите от своите 15 мин.

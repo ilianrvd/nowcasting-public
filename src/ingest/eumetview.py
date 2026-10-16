@@ -9,7 +9,7 @@ Ingest: EUMETSAT EUMETView (WCS, без регистрация)
 Сървър: https://view.eumetsat.int/geoserver/  (Fees: none, AccessConstraints: none)
 """
 
-import io, re, logging
+import io, os, re, logging
 import datetime as dt
 import numpy as np
 import requests
@@ -72,37 +72,83 @@ def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120):
     return arr, lat.astype(np.float64), lon.astype(np.float64)
 
 
-def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60) -> dict | None:
-    """Последният кадър H40B: валеж mm/h (NaN = няма данни), качество %.
-    Два опита — EUMETView понякога отговаря бавно или връща грешка."""
-    import time
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache", "h40b_last.npz")
+
+
+def _h40b_save_cache(d: dict):
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        np.savez_compressed(CACHE_FILE, rain=d["rain"], lat=d["lat"], lon=d["lon"],
+                            time=d["time"].strftime("%Y-%m-%dT%H:%M:%S"))
+    except Exception as e:
+        logger.debug(f"H40B кеш: не е записан ({e})")
+
+
+def _h40b_load_cache(now: dt.datetime, max_age_min: float):
+    """Последният успешен H40B от предишен пуск (GitHub Actions cache), ако е достатъчно пресен."""
+    try:
+        z = np.load(CACHE_FILE)
+        t = dt.datetime.fromisoformat(str(z["time"])).replace(tzinfo=dt.timezone.utc)
+    except Exception:
+        return None
+    age = (now - t).total_seconds() / 60
+    if age > max_age_min:
+        logger.warning(f"H40B кеш: {t:%H:%M} UTC е твърде стар ({age:.0f} мин)")
+        return None
+    logger.warning(f"H40B: ползвам кадъра от предишния пуск — {t:%H:%M} UTC ({age:.0f} мин)")
+    return {"time": t, "rain": z["rain"], "quality": None, "lat": z["lat"], "lon": z["lon"],
+            "source": "eumetsat_h40b_cache"}
+
+
+def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60,
+               cache_max_age_min: float = 70) -> dict | None:
+    """
+    Последният кадър H40B: валеж mm/h (NaN = няма данни).
+      1. кратко питане за последния кадър (DescribeCoverage, 20 s) — EUMETView често е бавен тук;
+      2. ако не отговори: часът се изчислява (кадри на 10 мин, ~20–30 мин закъснение)
+         и се пробват директно последните възможни кадри;
+      3. ако и това не мине: последният успешен кадър от предишния пуск (кеш, ≤ cache_max_age_min).
+    """
+    import time as _time
     now = now or dt.datetime.now(dt.timezone.utc)
+    t0 = _time.time()
+
+    try:
+        cands = [_latest_time("mtg_fd__h40b", timeout=20)]
+        how = "DescribeCoverage"
+    except Exception as e:
+        base = (now - dt.timedelta(minutes=20)).replace(second=0, microsecond=0)
+        base -= dt.timedelta(minutes=base.minute % 10)
+        cands = [base - dt.timedelta(minutes=10 * k) for k in range(4)]
+        how = f"изчислен час (DescribeCoverage: {str(e)[:50]})"
+
     last_err = None
-    for attempt in (1, 2):
-        try:
-            t = _latest_time("mtg_fd__h40b")
-            age = (now - t).total_seconds() / 60
-            if age > max_age_min:
-                logger.warning(f"H40B: последният кадър {t:%H:%M} UTC е стар ({age:.0f} мин) — не се ползва")
-                return None
-            arr, lat, lon = _get_coverage("mtg_fd__h40b", t)
+    for t in cands:
+        age = (now - t).total_seconds() / 60
+        if age > max_age_min:
             break
+        try:
+            arr, lat, lon = _get_coverage("mtg_fd__h40b", t, timeout=45)
         except Exception as e:
             last_err = e
-            if attempt == 1:
-                time.sleep(3)
-    else:
-        logger.warning(f"H40B недостъпен след 2 опита: {str(last_err)[:120]}")
-        return None
+            continue
+        rain = arr[0]
+        rain[(rain < 0) | ~np.isfinite(rain)] = np.nan
+        if not np.isfinite(rain).any():          # празен кадър (времето още го няма)
+            last_err = "празен кадър"
+            continue
+        quality = arr[1] if arr.shape[0] > 1 else None
+        logger.info(f"H40B: {t:%H:%M} UTC (закъснение {age:.0f} мин, {how}, "
+                    f"{_time.time() - t0:.0f} s), {rain.shape}, "
+                    f"валеж >0.1 mm/h в {int(np.nansum(rain > 0.1))} px, "
+                    f"max {np.nanmax(rain):.1f} mm/h")
+        d = {"time": t, "rain": rain, "quality": quality, "lat": lat, "lon": lon,
+             "source": "eumetsat_h40b"}
+        _h40b_save_cache(d)
+        return d
 
-    rain = arr[0]
-    rain[(rain < 0) | ~np.isfinite(rain)] = np.nan
-    quality = arr[1] if arr.shape[0] > 1 else None
-    logger.info(f"H40B: {t:%H:%M} UTC (закъснение {age:.0f} мин), {rain.shape}, "
-                f"валеж >0.1 mm/h в {int(np.nansum(rain > 0.1))} px, "
-                f"max {np.nanmax(rain) if np.any(np.isfinite(rain)) else 0:.1f} mm/h")
-    return {"time": t, "rain": rain, "quality": quality, "lat": lat, "lon": lon,
-            "source": "eumetsat_h40b"}
+    logger.warning(f"H40B недостъпен ({_time.time() - t0:.0f} s): {str(last_err)[:100]}")
+    return _h40b_load_cache(now, cache_max_age_min)
 
 
 # Легендата на li_afa (GetLegendGraphic, 640 px): цвят → светкавици/5 мин.
