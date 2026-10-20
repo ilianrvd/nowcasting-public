@@ -106,7 +106,7 @@ def _h40b_load_cache(now: dt.datetime, max_age_min: float):
             "source": "eumetsat_h40b_cache"}
 
 
-def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60,
+def fetch_h40b(now: dt.datetime = None, max_age_min: float = 70,
                cache_max_age_min: float = 70) -> dict | None:
     """
     Последният кадър H40B: валеж mm/h (NaN = няма данни).
@@ -120,7 +120,8 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60,
     t0 = _time.time()
 
     try:
-        cands = [_latest_time("mtg_fd__h40b", timeout=20)]
+        latest = _latest_time("mtg_fd__h40b", timeout=20)
+        cands = [latest - dt.timedelta(minutes=10 * k) for k in range(3)]   # и по-старите, ако последният не се свали
         how = "DescribeCoverage"
     except Exception as e:
         base = (now - dt.timedelta(minutes=20)).replace(second=0, microsecond=0)

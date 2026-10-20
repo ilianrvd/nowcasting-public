@@ -214,7 +214,8 @@ def main():
     from config.settings import SATELLITE
     cov_w = coverage_weight(comp["dbz"], ramp_px=SATELLITE["ramp_px"])
     sat_layer = None
-    if h40b_future is not None and float((cov_w < 1.0).mean()) > 0.01:
+    need_fill = float((cov_w < 1.0).mean()) > 0.01
+    if h40b_future is not None and need_fill:
         log.info("── Фаза 5a: Сателит H40B ──")
         try:
             h40b = h40b_future.result(timeout=240)
@@ -232,6 +233,7 @@ def main():
                                               LIGHTNING_BOOST.get("sat_intense_min_mmh"))
         except Exception as e:
             log.warning(f"  H40B: {e}")
+    if need_fill:
         if sat_layer is None and icon_data is not None:
             # Резерв №3: ICON при +0, коригиран по мълниите (без LI — само ICON)
             try:

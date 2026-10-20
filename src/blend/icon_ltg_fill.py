@@ -139,6 +139,8 @@ class IconLtgLayer:
         self.with_ltg = li_count is not None
         self.label = "модел ICON, коригиран по мълнии" if self.with_ltg else "модел ICON"
         self.stats = st
+        self._li, self._zone, self._km = li_count, zone, km_per_px
+        self._corr_cache = {}
 
         self.vx = (V[0] / ts_min).astype(np.float32)
         self.vy = (V[1] / ts_min).astype(np.float32)
@@ -155,6 +157,23 @@ class IconLtgLayer:
                         + f", нови ядра {st['new']}, отслабени ядра без мълнии {st['weakened']}")
         else:
             logger.info(f"Резерв ICON ({t0:%H:%M} UTC): без мълнии — само моделът")
+
+    def correct_icon(self, dbz_icon: np.ndarray, target_time: dt.datetime) -> np.ndarray:
+        """
+        Същата корекция върху ICON за по-късен момент (за blend-а): мълниите се местят
+        с V до target_time и ICON се съпоставя с тях. Без LI — ICON без промяна.
+        Кеш по (час на ICON, 30-мин интервал).
+        """
+        if self._li is None:
+            return dbz_icon
+        k = (target_time - self.time).total_seconds() / 60.0
+        key = (id(dbz_icon), int(k // 30))
+        if key not in self._corr_cache:
+            kk = (key[1] + 0.5) * 30.0
+            coords = [self.yy - self.vy * kk, self.xx - self.vx * kk]
+            li = map_coordinates(self._li, coords, order=0, mode="constant", cval=0.0)
+            self._corr_cache[key], _ = correct_icon_with_lightning(dbz_icon, li, self._zone, self._km)
+        return self._corr_cache[key]
 
     def z_at(self, target_time: dt.datetime) -> np.ndarray:
         """Z полето, преместено от t0 до target_time (обратна траектория)."""

@@ -32,6 +32,12 @@ RADAR_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70]
 #   ANM România — отворени данни (набор с висока стойност по Регл. (ЕС) 2023/138).
 _YEAR = dt.datetime.utcnow().year
 EUMETSAT_TXT = f"Contains modified EUMETSAT data {_YEAR} (MTG LI; H SAF H40B, obtained from the H SAF operated by EUMETSAT)"
+EUMETSAT_LI_TXT = f"Contains modified EUMETSAT data {_YEAR} (MTG LI)"
+
+
+def _eumetsat_txt(comp):
+    """H40B се споменава само ако е ползван в този пуск."""
+    return EUMETSAT_TXT if comp.get("sat_on_map") else EUMETSAT_LI_TXT
 DWD_TXT = "Datenbasis: Deutscher Wetterdienst, ICON-EU (обработени)"
 CC_BY = ("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/deed.bg")
 
@@ -153,7 +159,8 @@ def plot_nowcast(forecast, output_path=None):
     sources = comp.get("sources", [])
     ax.set_title(f"OBS {comp['timestamp'].strftime('%H:%M')} UTC"
                  + ("  + H40B" if comp.get("sat_on_map") else "")
-                 + ("  (H40B липсва)" if comp.get("sat_missing") else "")
+                 + ("  + ICON/мълнии (H40B липсва)" if comp.get("fill_src") else
+                    "  (H40B липсва)" if comp.get("sat_missing") else "")
                  + ("  (контур: мълнии 15 мин)" if li is not None and (li >= 1).any() else "") + "\n"
                  f"{', '.join(sources)}", fontsize=9)
 
@@ -176,7 +183,7 @@ def plot_nowcast(forecast, output_path=None):
     plt.suptitle(f'NOWCASTING PUBLIC — {forecast.get("method", "S-PROG")}{_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
-    _add_credits(fig, comp, [EUMETSAT_TXT, "CC BY 4.0"])
+    _add_credits(fig, comp, [_eumetsat_txt(comp), "CC BY 4.0"])
 
     if output_path is None:
         output_path = os.path.join(MAPS_DIR, "nowcast.png")
@@ -244,7 +251,7 @@ def plot_blended(blended_dbz, blend_times, comp, output_path=None, actual_weight
     plt.suptitle(f'BLENDED FORECAST — Radar + ICON-EU (0–6h){_mov_text(comp)}',
                  fontsize=13, fontweight='bold')
 
-    _add_credits(fig, comp, [EUMETSAT_TXT,
+    _add_credits(fig, comp, [_eumetsat_txt(comp),
                              OPEN_METEO[0] if comp.get("icon_src") == "open-meteo" else DWD_TXT,
                              "CC BY 4.0"])
 
@@ -265,6 +272,7 @@ def _credit_links(comp):
             out.append({"name": name, "url": url})
             seen.add(name)
     fixed = list(FIXED_LINKS)
+    fixed[0] = (_eumetsat_txt(comp), fixed[0][1])
     if comp.get("icon_src") == "open-meteo":          # резервът за ICON
         fixed[1] = OPEN_METEO
     out += [{"name": n, "url": u} for n, u in fixed + [CC_BY]]

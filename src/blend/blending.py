@@ -227,8 +227,15 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         # ── ICON ─────────────────────────────────────────
         need_icon = iw > 0
         if need_icon and icon_data is not None:
-            z_icon = dbz_to_z(interpolate_icon(target_time, icon_data,
-                                               target_lat, target_lon))
+            d_icon = interpolate_icon(target_time, icon_data, target_lat, target_lon)
+            z_icon = dbz_to_z(d_icon)
+            # Резерв ICON+LI: в зоната без радар ICON се коригира по мълниите (преместени
+            # с движението). Пълна корекция, докато rw ≥ 0.5 (~+100 мин), после избледнява до
+            # края на радарния хоризонт — иначе Z-смесването връща ядрото на модела още от +60 мин.
+            if use_cov and rw > 0 and sat_layer is not None and hasattr(sat_layer, "correct_icon"):
+                z_corr = dbz_to_z(sat_layer.correct_icon(d_icon, target_time))
+                wz = (1.0 - coverage_w) * min(1.0, 2.0 * rw)
+                z_icon = (1.0 - wz) * z_icon + wz * z_corr
         else:
             z_icon = np.zeros((ny, nx), dtype=np.float32)
             if icon_data is None:
