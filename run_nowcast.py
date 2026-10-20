@@ -167,6 +167,13 @@ def main():
         log.error("ФАТАЛНО: Няма composites!")
         sys.exit(1)
 
+    # ── 4a. ЗЕМНИ ОТРАЖЕНИЯ (clutter) — преди мълниите и движението ──
+    try:
+        from src.composite.clutter import filter_clutter
+        filter_clutter(composites, li_frames)
+    except Exception as e:
+        log.warning(f"  Clutter: {e}")
+
     # ── 4b. УСИЛВАНЕ С МЪЛНИИ (преди прогнозата) ─────────
     li_last = None
     if li_frames:
