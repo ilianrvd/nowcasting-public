@@ -193,7 +193,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
     use_cov = coverage_w is not None and float(coverage_w.min()) < 1.0
     if use_cov:
         no_radar = float((coverage_w < 0.5).mean())
-        src = (f"сателит H40B ({sat_layer.time:%H:%M} UTC, "
+        src = (f"{getattr(sat_layer, 'label', 'сателит H40B')} ({sat_layer.time:%H:%M} UTC, "
                f"{(ref_time - sat_layer.time).total_seconds() / 60:.0f} мин преди радара)"
                if sat_layer is not None else "няма сателит → ICON постепенно, до тогава „няма данни“")
         logger.info(f"  Без радар: {no_radar:.0%} от домейна → {src}")
@@ -202,7 +202,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
             fill = coverage_w < 0.5
             n_sat = int(((z0 > 0) & fill).sum())
             mx_sat = 10 * np.log10(z0[fill].max()) if n_sat else 0.0
-            logger.info(f"  Сателит в зоната без радар: {n_sat} px с валеж, "
+            logger.info(f"  Попълване в зоната без радар: {n_sat} px с валеж, "
                         f"max {mx_sat:.1f} dBZ (към {ref_time:%H:%M})")
     for step in range(n_total):
         minutes = (step + 1) * blend_step

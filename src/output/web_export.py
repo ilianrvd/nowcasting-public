@@ -92,11 +92,15 @@ def _clean(dbz):
     return out
 
 
-def _save_png(dbz, lat, path, nodata=None):
+def _save_png(dbz, lat, path, nodata=None, model=None):
     from PIL import Image
     d = _to_mercator_rows(dbz, lat)          # dbz вече е почистено (_clean)
     img = np.zeros(d.shape + (4,), dtype=np.uint8)
     ok = np.isfinite(d)
+    if model is not None:                    # лека рядка щриховка: зоната е по модел (ICON + мълнии)
+        md = _to_mercator_rows(model.astype(np.uint8), lat).astype(bool)
+        yy, xx = np.indices(md.shape)
+        img[md & (((yy + xx) % 14) < 1)] = (110, 118, 128, 110)
     if nodata is not None:                   # сива щриховка там, където нямаме данни
         nd = _to_mercator_rows(nodata.astype(np.uint8), lat).astype(bool) & ~ok
         yy, xx = np.indices(nd.shape)
@@ -312,7 +316,7 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
     covered = comp.get("coverage")
     if covered is None:
         covered = np.isfinite(comp["dbz"])
-    nd_zone = None if comp.get("sat_on_map") else ~np.asarray(covered, dtype=bool)
+    nd_zone = None if (comp.get("sat_on_map") or comp.get("fill_src")) else ~np.asarray(covered, dtype=bool)
     horizon = (fc_times[-1] - t0).total_seconds() / 60 if fc_times else 0.0
 
     def nodata_for(m):
@@ -323,6 +327,21 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
         return nd_zone if blend_weights(m, radar_horizon=horizon)[1] < 0.5 else None
 
     nodata = [nodata_for(m) for m, _, _ in frames]
+
+    # Резерв ICON + мълнии: същата зона и същият прозорец, но с данни (по модел) → лека щриховка
+    fill_src = comp.get("fill_src")
+    md_zone = ~np.asarray(covered, dtype=bool) if fill_src else None
+    fill_label = {"icon_ltg": "модел ICON, коригиран по мълнии", "icon": "модел ICON"}.get(fill_src)
+
+    def model_for(m):
+        if md_zone is None or not md_zone.any():
+            return None
+        return md_zone if (m == 0 or blend_weights(m, radar_horizon=horizon)[1] < 0.5) else None
+
+    model = [model_for(m) for m, _, _ in frames]
+    if model[0] is not None:
+        logger.info(f"  Без радар и сателит: {md_zone.mean():.0%} от домейна → {fill_label} "
+                    f"до +{max(m for (m, _, _), n in zip(frames, model) if n is not None)} мин")
     if nodata[0] is not None:
         logger.info(f"  Без радар и сателит: {nd_zone.mean():.0%} от домейна → „няма данни“ "
                     f"до +{max(m for (m, _, _), n in zip(frames, nodata) if n is not None)} мин")
@@ -330,11 +349,11 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
     meta_frames = []
     for i, (m, f, src) in enumerate(frames):
         name = f"f_{i:02d}.png"
-        _save_png(f, lat, os.path.join(OUT_DIR, name), nodata[i])
+        _save_png(f, lat, os.path.join(OUT_DIR, name), nodata[i], model[i])
         t = t0 + dt.timedelta(minutes=m)
         meta_frames.append({"file": name, "lead_min": m, "time_utc": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "time_local": _local(t), "source": src,
-                            "nodata": nodata[i] is not None})
+                            "nodata": nodata[i] is not None, "model": model[i] is not None})
 
     # ── Стартове ──────────────────────────────────────────
     sites = load_sites()
@@ -354,8 +373,14 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
                 st.append(c); why.append(w)
             # за точките на картата: състояние за всеки кадър (вкл. +4…+6 ч)
             sw = [_status(f, li if m == 0 else None, mk, nd) for (m, f, _), nd in zip(frames, nodata)]
-            site_out.append({**s, "status": st, "why": why,
-                             "status_frames": [c for c, _ in sw], "why_frames": [w for _, w in sw]})
+            rec = {**s, "status": st, "why": why,
+                   "status_frames": [c for c, _ in sw], "why_frames": [w for _, w in sw]}
+            if md_zone is not None:              # кръгът на старта е предимно в зоната „по модел“
+                in_md = float(md_zone[mk[1]].mean()) > 0.5 if mk[1][0].size else False
+                if in_md:
+                    rec["model_frames"] = [md is not None for md in model]
+                    rec["model_leads"] = [model_for(m) is not None for m in SITE_LEADS]
+            site_out.append(rec)
 
         # Вятър (ICON): за колоните на таблицата и за всеки кадър на картата
         if winds is not None and wind_grid is not None:
@@ -400,6 +425,7 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
         "lightning": _lightning_points(li, lat, lon),
         "sources": comp.get("sources", []),
         "satellite": bool(comp.get("sat_on_map")),
+        "fill_label": fill_label,
     }
     with open(os.path.join(OUT_DIR, "frames.json"), "w", encoding="utf-8") as fo:
         json.dump(meta, fo, ensure_ascii=False)

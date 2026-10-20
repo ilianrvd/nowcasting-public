@@ -47,6 +47,7 @@
   .arr { display: inline-block; font-weight: 700; }
   #detail { font-size: .82rem; color: var(--fg); background: #f6f8fa; border-radius: 6px; padding: 6px 10px; margin-top: 6px; display: none; }
   .nodata { background: repeating-linear-gradient(45deg, #8a939e 0 3px, #d5dae0 3px 6px); }
+  .modelz { background: repeating-linear-gradient(45deg, #8a939e 0 1px, transparent 1px 7px); border: 1px solid #c3cad2; }
   .filters { margin: 14px 0 6px; display: flex; gap: 6px; flex-wrap: wrap; }
   .filters button { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 3px 10px; font-size: .82rem; cursor: pointer; }
   .filters button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -84,6 +85,7 @@
     <span><i style="background:#FF0000"></i>много силен / градушка</span>
     <span><span class="ltgleg"></span> мълнии (последните 15 мин)</span>
     <span id="ndleg" style="display:none"><i class="nodata"></i>няма данни (без радар и сателит)</span>
+    <span id="mdleg" style="display:none"><i class="modelz"></i><span id="mdtxt">без радар и сателит: модел ICON, коригиран по мълнии</span></span>
   </div>
   <div class="motion" id="motion"></div>
 
@@ -178,12 +180,13 @@ function drawSites(i) {                 // i = индекс на кадъра н
       ? L.divIcon({ className: '', html: '<div class="site-w">W</div>', iconSize: [16, 16] })
       : L.divIcon({ className: '', html: `<div class="site-pin" style="background:${COLORS[st]}"></div>`, iconSize: [12, 12] });
     const f = meta.frames[i];
-    const rain = { green: 'чисто', yellow: 'дъжд', red: 'гръмотевична клетка', nodata: 'няма данни' }[s.status_frames ? s.status_frames[i] : ''] || '';
+    const byModel = s.model_frames && s.model_frames[i] ? ' (по модел)' : '';
+    const rain = ({ green: 'чисто', yellow: 'дъжд', red: 'гръмотевична клетка', nodata: 'няма данни' }[s.status_frames ? s.status_frames[i] : ''] || '') + byModel;
     const whyR = s.why_frames ? s.why_frames[i] : '';
     const wind = s.wtxt_frames ? s.wtxt_frames[i] : '';
     const allTxt = tab === 'all' && s.status_frames ? allFrames(s)[i][1] : '';
     const tip = `<b>${s.name}</b> · ${f.time_local}<br>` +
-                (allTxt || rain + (wind ? `<br>${wind.split('\n')[0]}` : ''));
+                (allTxt ? allTxt + byModel : rain + (wind ? `<br>${wind.split('\n')[0]}` : ''));
     return L.marker([s.lat, s.lon], { icon })
       .bindTooltip(tip, { direction: 'top', offset: [0, -6] })
       .bindPopup(`<b>${s.name}</b><br>посоки: ${s.dirs || '—'} · ${s.type || ''}` +
@@ -225,9 +228,10 @@ function allFrames(s) {                   // вятърът по кадри е �
 }
 
 function cellsFor(s) {                  // [{cls, html, info}] за избрания таб
-  if (tab === 'all') return allLeads(s).map(([c, t]) => ({ cls: '', info: t,
+  const bm = i => s.model_leads && s.model_leads[i] ? ' (по модел)' : '';
+  if (tab === 'all') return allLeads(s).map(([c, t], i) => ({ cls: '', info: t + bm(i),
       html: c === 'wind' ? '<span class="wglyph">W</span>' : `<span class="dot ${c || 'na'}"></span>` }));
-  if (tab === 'rain') return s.status.map((st, i) => ({ cls: '', info: (s.why && s.why[i]) || '',
+  if (tab === 'rain') return s.status.map((st, i) => ({ cls: '', info: ((s.why && s.why[i]) || '') + bm(i),
       html: `<span class="dot ${st || 'na'}"></span>` }));
   const w = tab === 'w10' ? s.w10 : s.w850;
   if (!w) return s.status.map(() => ({ cls: '', html: '—', info: 'няма данни за вятъра' }));
@@ -312,6 +316,8 @@ async function load() {
     icon: L.divIcon({ className: 'ltg', html: LTG_SVG, iconSize: [8, 10] }), interactive: false })));
 
   document.getElementById('ndleg').style.display = meta.frames.some(f => f.nodata) ? '' : 'none';
+  document.getElementById('mdleg').style.display = meta.frames.some(f => f.model) ? '' : 'none';
+  if (meta.fill_label) document.getElementById('mdtxt').textContent = 'без радар и сателит: ' + meta.fill_label;
   document.getElementById('motion').textContent = meta.motion.length ?
     'Движение: ' + meta.motion.map(m => `${m.region} → ${m.dir} ${m.ms != null ? m.ms : Math.round(m.kmh / 3.6)} m/s`).join(' · ') : '';
 

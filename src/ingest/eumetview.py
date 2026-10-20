@@ -132,6 +132,8 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 60,
     for t in cands:
         age = (now - t).total_seconds() / 60
         if age > max_age_min:
+            if last_err is None:
+                last_err = f"последен кадър {t:%H:%M} UTC ({age:.0f} мин) — над {max_age_min:.0f} мин"
             break
         arr = None
         for band in (H40B_BAND, H40B_BAND, None):   # 2 опита само с валежа, после и двата канала

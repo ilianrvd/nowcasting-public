@@ -47,6 +47,8 @@ def main():
     parser.add_argument("--no-icon", action="store_true")
     parser.add_argument("--no-backup", action="store_true",
                         help="без резервни радари (Истанбул за STS)")
+    parser.add_argument("--force-icon-ltg", action="store_true",
+                        help="тест: резервът ICON + мълнии вместо H40B в зоната без радар")
     parser.add_argument("--no-satellite", action="store_true",
                         help="без H40B за зоните без радар (там ICON от +0)")
     parser.add_argument("--n-frames", type=int, default=5)
@@ -216,6 +218,9 @@ def main():
         log.info("── Фаза 5a: Сателит H40B ──")
         try:
             h40b = h40b_future.result(timeout=240)
+            if args.force_icon_ltg:
+                log.info("  --force-icon-ltg: H40B се пропуска (тест на резерва)")
+                h40b = None
             if h40b is not None:
                 sat_layer = SatelliteLayer(h40b, forecast["motion"], real_ts,
                                            comp["lat"], comp["lon"],
@@ -227,8 +232,22 @@ def main():
                                               LIGHTNING_BOOST.get("sat_intense_min_mmh"))
         except Exception as e:
             log.warning(f"  H40B: {e}")
+        if sat_layer is None and icon_data is not None:
+            # Резерв №3: ICON при +0, коригиран по мълниите (без LI — само ICON)
+            try:
+                from src.blend.icon_ltg_fill import IconLtgLayer
+                sat_layer = IconLtgLayer(icon_data, li_last, comp["timestamp"], forecast["motion"],
+                                         real_ts, comp["lat"], comp["lon"], cov_w)
+                comp["fill_src"] = "icon_ltg" if sat_layer.with_ltg else "icon"
+                comp["sat_missing"] = True
+                log.warning(f"  H40B липсва — в зоната без радар: {sat_layer.label}")
+            except Exception as e:
+                log.warning(f"  Резерв ICON+LI: {e}")
+                sat_layer = None
         if sat_layer is not None:
             fill_nowcast_for_map(forecast, cov_w, sat_layer)
+            if comp.get("fill_src"):
+                comp["sat_on_map"] = False          # не е сателит — картата го отбелязва отделно
         else:
             comp["sat_missing"] = True
             log.warning("  H40B липсва — зоната без радар е празна на nowcast картата, ICON от +0 в blend-а")
