@@ -16,6 +16,17 @@
     → истинска силна клетка над билото минава.
 Първоначално знание: config/clutter_seed.npz (от кадрите на 20.10.2026), за да не се
 чака денонощие, докато статистиката се натрупа.
+
+Второ правило — по височината на върха на ехото (ETOP, файловете ..._Height.hdf на
+румънския композит), за по-широки петна (21.10.2026 сутрин — инверсия, лъчът хваща
+целия склон, а не само билото):
+  • пикселът има ехо в ≥ static_min_frames от кадрите на серията, почти без промяна
+    (std < static_max_std dB) — неподвижно като земята;
+  • и в румънското покритие на ETOP няма връх в нито един кадър (земното отражение
+    почти никога няма ETOP, истинският валеж почти винаги има) — или върхът е под
+    static_low_top_km, но пикселът вече е „подозрителен“ по статистиката (freq ≥ static_freq).
+  Само на север от 43° N (зоната на румънския радар). Мерено на 21.10 02:20–05:10 UTC:
+  махнати 79% от фалшивото ехо по склона на Стара планина.
 """
 
 import os, sys, logging
@@ -31,6 +42,71 @@ logger = logging.getLogger("composite.clutter")
 _ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 STATE_FILE = os.path.join(_ROOT, "data", "cache", "clutter.npz")
 SEED_FILE = os.path.join(_ROOT, "config", "clutter_seed.npz")
+
+
+def _etop_on_grid(ts: dt.datetime, lat: np.ndarray, lon: np.ndarray):
+    """ETOP (km) от румънския ..._Height.hdf за час ts върху нашата решетка.
+    Връща (етоп, покритие): етоп = NaN където няма връх; покритие = вътре в продукта.
+    None, ако файлът липсва."""
+    import h5py
+    from pyproj import Proj
+    from src.ingest.radar_romania import HEIGHT_DIR
+    fn = os.path.join(HEIGHT_DIR, f"COMPOSITE_{ts:%Y%m%d%H%M%S}00Height.hdf")
+    if not os.path.exists(fn):
+        return None
+    with h5py.File(fn, "r") as h:
+        w = h["where"].attrs
+        dw = h["dataset1/what"].attrs
+        raw = h["dataset1/data1/data"][:]
+        pd = w["projdef"]; pd = pd.decode() if isinstance(pd, bytes) else str(pd)
+        nod, und = float(dw["nodata"]), float(dw["undetect"])
+        val = np.where((raw != nod) & (raw != und), raw * float(dw["gain"]) + float(dw["offset"]), np.nan)
+        cov = raw != nod
+        p = Proj(pd)
+        x0, y0 = p(float(w["UL_lon"]), float(w["UL_lat"]))
+        dx, dy = float(w["xscale"]), float(w["yscale"])
+    LO, LA = np.meshgrid(lon, lat)
+    x, y = p(LO, LA)
+    j = np.round((x - x0) / dx - 0.5).astype(int)
+    i = np.round((y0 - y) / dy - 0.5).astype(int)
+    ok = (i >= 0) & (i < val.shape[0]) & (j >= 0) & (j < val.shape[1])
+    et = np.full(LO.shape, np.nan, np.float32)
+    cv = np.zeros(LO.shape, bool)
+    et[ok], cv[ok] = val[i[ok], j[ok]], cov[i[ok], j[ok]]
+    return et, cv
+
+
+def static_mask(composites: list[dict], freq: np.ndarray, cfg: dict = None):
+    """Неподвижно ехо без връх (или с нисък връх на „подозрителен“ пиксел) — по серията."""
+    cfg = cfg or CLUTTER
+    lat, lon = composites[-1]["lat"], composites[-1]["lon"]
+    tops, covs, dbzs = [], [], []
+    for c in composites:
+        r = _etop_on_grid(c["timestamp"], lat, lon)
+        if r is None:
+            continue
+        tops.append(r[0]); covs.append(r[1]); dbzs.append(c["dbz"])
+    if len(dbzs) < cfg["static_min_frames"]:
+        return None, (len(dbzs), float("nan"))
+    Z = np.array(dbzs, dtype=np.float32)
+    e = np.nan_to_num(Z, nan=-99.0) >= cfg["echo_dbz"]
+    cnt = e.sum(0)
+    import warnings
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        sd = np.nanstd(np.where(e, Z, np.nan), axis=0)
+        T = np.where(e, np.array(tops), np.nan)
+        anytop = np.isfinite(T).any(0)
+        hmx = np.nanmax(np.where(np.isfinite(T), T, -1.0), axis=0)
+    in_ro = np.array(covs).all(0) & (lat[:, None] >= cfg["static_lat_min"])
+    low = ~anytop | ((hmx < cfg["static_low_top_km"]) & (freq >= cfg["static_freq"]))
+    m = (cnt >= cfg["static_min_frames"]) & (np.nan_to_num(sd, nan=99.0) < cfg["static_max_std"]) & low & in_ro
+    if m.any():
+        m = binary_dilation(m, iterations=1) & in_ro
+    # за проверка при истински валеж: какъв дял от ехото в последния кадър има връх
+    last = e[-1] & in_ro
+    share = float(np.isfinite(T[-1][last]).mean()) if last.any() else float("nan")
+    return m, (len(dbzs), share)
 
 
 def clutter_mask(freq: np.ndarray, cfg: dict = None) -> np.ndarray:
@@ -95,8 +171,25 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
     _save_state(freq, last, lat, lon)
 
     mask = clutter_mask(freq)
+    n_learn = int(mask.sum())
+    try:
+        st, (n_et, top_share) = static_mask(composites, freq)
+    except Exception as e:
+        st, n_et, top_share = None, 0, float("nan")
+        logger.warning(f"  Clutter: ETOP правилото не мина ({e})")
+    n_static = int(st.sum()) if st is not None else 0
+    st_note = ""
+    if st is not None and np.isfinite(top_share) and top_share > cfg["static_max_top_share"]:
+        st_note = f" — ИЗКЛЮЧЕНО: {top_share:.0%} от ехото има връх (валеж)"
+        st = None
+    elif st is not None and not cfg.get("static_enabled", True):
+        st_note = " — само за лога (static_enabled=False)"
+        st = None
+    if st is not None:
+        mask = mask | st
     if not mask.any():
-        logger.info(f"  Clutter: няма маркирани пиксели (статистика: {src}, +{n_new} кадъра)")
+        logger.info(f"  Clutter: няма маркирани пиксели (статистика: {src}, +{n_new} кадъра; "
+                    f"ETOP кадри: {n_et}){st_note}")
         return
 
     ltg_fn = None
@@ -114,5 +207,7 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
                 m &= ~(cnt >= 1)
         d[m] = 0.0                                       # в покритието, но сухо
         removed.append(int(m.sum()))
-    logger.info(f"  Clutter: маркирани {int(mask.sum())} px (статистика: {src}, +{n_new} кадъра); "
+    logger.info(f"  Clutter: маркирани {int(mask.sum())} px (по статистика {n_learn}, неподвижно ехо "
+                f"без връх {n_static}; статистика: {src}, +{n_new} кадъра; ETOP кадри: {n_et}, "
+                f"ехо с връх: {top_share:.0%}{st_note}); "
                 f"махнато ехо по кадри: {removed}")

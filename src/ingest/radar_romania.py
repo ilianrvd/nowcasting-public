@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from config.settings import ROMANIA, ROMANIA_DIR
 
 logger = logging.getLogger("ingest.romania")
+HEIGHT_DIR = os.path.join(ROMANIA_DIR, "height")      # ETOP (височина на върха на ехото)
 
 
 def read_romania_composite(filepath: str) -> dict | None:
@@ -134,10 +135,19 @@ def download_romania_composite() -> str | None:
 
     # Всяко име се среща два пъти в HTML (href + текст) → уникални
     links = sorted(set(links))
+    # Височината на върха на ехото (ETOP) за същите часове — за филтъра за земни отражения
+    heights = set(re.findall(r'(COMPOSITE_\d+Height\.hdf)', resp.text))
+    os.makedirs(HEIGHT_DIR, exist_ok=True)
+    jobs = []
     # Свали последните 8 файла (серия от 5 + резерв за изпуснати марки)
     for fname in links[-8:]:
+        jobs.append((fname, ROMANIA_DIR))
+        hname = fname.replace("dBZ.hdf", "Height.hdf")
+        if hname in heights:
+            jobs.append((hname, HEIGHT_DIR))
+    for fname, folder in jobs:
         file_url = url.rstrip('/') + '/' + fname
-        local_path = os.path.join(ROMANIA_DIR, os.path.basename(fname))
+        local_path = os.path.join(folder, os.path.basename(fname))
         if os.path.exists(local_path):
             continue
         logger.info(f"  Сваляне: {fname}")
@@ -157,7 +167,7 @@ def find_local_composites(n_latest: int = 5) -> list[str]:
     files = sorted([
         os.path.join(ROMANIA_DIR, f)
         for f in os.listdir(ROMANIA_DIR)
-        if f.startswith("COMPOSITE") and f.endswith(".hdf")
+        if f.startswith("COMPOSITE") and f.endswith("dBZ.hdf")
     ])
     return files[-n_latest:]
 

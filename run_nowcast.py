@@ -68,7 +68,7 @@ def main():
     import re
     from config.settings import ROMANIA_DIR
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
-    for pattern in [os.path.join(ROMANIA_DIR, "*.hdf")]:
+    for pattern in [os.path.join(ROMANIA_DIR, "*.hdf"), os.path.join(ROMANIA_DIR, "height", "*.hdf")]:
         for f in glob.glob(pattern):
             try:
                 m = re.search(r'(\d{14})', os.path.basename(f))
