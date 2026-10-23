@@ -179,8 +179,10 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
         logger.warning(f"  Clutter: ETOP правилото не мина ({e})")
     n_static = int(st.sum()) if st is not None else 0
     st_note = ""
-    if st is not None and np.isfinite(top_share) and top_share > cfg["static_max_top_share"]:
-        st_note = f" — ИЗКЛЮЧЕНО: {top_share:.0%} от ехото има връх (валеж)"
+    rain_mode = bool(np.isfinite(top_share) and top_share > cfg["static_max_top_share"])
+    if st is not None and rain_mode:
+        st_note = (f" — ИЗКЛЮЧЕНО: {top_share:.0%} от ехото има връх (валеж); "
+                   f"маската пази ехото с връх")
         st = None
     elif st is not None and not cfg.get("static_enabled", True):
         st_note = " — само за лога (static_enabled=False)"
@@ -205,6 +207,10 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
             cnt = ltg_fn(comp)
             if cnt is not None:
                 m &= ~(cnt >= 1)
+        if rain_mode:                                    # при валеж: маха се само ехо без връх
+            r = _etop_on_grid(comp["timestamp"], lat, lon)
+            if r is not None:
+                m &= ~np.isfinite(r[0])
         d[m] = 0.0                                       # в покритието, но сухо
         removed.append(int(m.sum()))
     logger.info(f"  Clutter: маркирани {int(mask.sum())} px (по статистика {n_learn}, неподвижно ехо "
