@@ -91,10 +91,15 @@ def read_romania_composite(filepath: str) -> dict | None:
     if lat_1d[0] < lat_1d[-1]:
         dbz = dbz[::-1, :]
 
-    # Черно море clutter: по-висок праг (30 dBZ) за румънския радар в морската зона
-    lon2d, lat2d = np.meshgrid(lon_1d, lat_1d)
-    sea_mask = (lat2d >= 42.0) & (lat2d <= 44.0) & (lon2d >= 28.0) & (lon2d <= 30.5)
-    dbz[sea_mask & (dbz < 30.0)] = np.nan
+    # Черно море: морските отражения се махат в composite/clutter.py (sea_filter) —
+    # под 30 dBZ, но само ехо без връх (ETOP). Тук остава твърдият праг само ако
+    # ROMANIA_SEA["mode"] == "always" (старото поведение до 27.10.2026).
+    from config.settings import ROMANIA_SEA as SEA
+    if SEA.get("mode") == "always":
+        lon2d, lat2d = np.meshgrid(lon_1d, lat_1d)
+        sea_mask = ((lat2d >= SEA["lat"][0]) & (lat2d <= SEA["lat"][1]) &
+                    (lon2d >= SEA["lon"][0]) & (lon2d <= SEA["lon"][1]))
+        dbz[sea_mask & (dbz < SEA["min_dbz"])] = np.nan
 
     logger.info(f"  {timestamp}  {ysize}×{xsize}  "
                 f"({ll_lat:.1f}-{ur_lat:.1f}°N, {ll_lon:.1f}-{ur_lon:.1f}°E)  "

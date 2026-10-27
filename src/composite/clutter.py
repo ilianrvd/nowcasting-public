@@ -150,10 +150,38 @@ def _save_state(freq, last_time, lat, lon):
         logger.debug(f"clutter: състоянието не е записано ({e})")
 
 
+def sea_filter(composites: list[dict]) -> None:
+    """Черно море (ROMANIA_SEA): под min_dbz се маха само ехо без връх (ETOP).
+    Без ETOP файл за кадъра — твърдият праг както преди."""
+    from config.settings import ROMANIA_SEA as SEA
+    if SEA.get("mode") != "no_top" or not composites:
+        return
+    lat, lon = composites[-1]["lat"], composites[-1]["lon"]
+    box = ((lat[:, None] >= SEA["lat"][0]) & (lat[:, None] <= SEA["lat"][1]) &
+           (lon[None, :] >= SEA["lon"][0]) & (lon[None, :] <= SEA["lon"][1]))
+    kept, cut, hard = [], [], 0
+    for c in composites:
+        d = c["dbz"]
+        weak = box & np.isfinite(d) & (d > 0) & (d < SEA["min_dbz"])
+        r = _etop_on_grid(c["timestamp"], lat, lon)
+        if r is None:
+            m, hard = weak, hard + 1
+        else:
+            m = weak & ~np.isfinite(r[0])
+        kept.append(int((weak & ~m).sum())); cut.append(int(m.sum()))
+        d[m] = 0.0
+    logger.info(f"  Море: под {SEA['min_dbz']:.0f} dBZ без връх махнато {cut}, с връх оставено {kept}"
+                + (f" (без ETOP — твърд праг в {hard} кадъра)" if hard else ""))
+
+
 def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None:
     """Обновява статистиката с новите кадри и маха clutter от всички composites (на място)."""
     if not composites:
         return
+    try:
+        sea_filter(composites)                # първо морето — да не влиза в статистиката
+    except Exception as e:
+        logger.warning(f"  Море: {e}")
     cfg = CLUTTER
     lat, lon = composites[-1]["lat"], composites[-1]["lon"]
     freq, last, src = _load_state(lat, lon)
