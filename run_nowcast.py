@@ -300,6 +300,14 @@ def main():
     except Exception as e:
         log.warning(f"  Web експорт: {e}")
 
+    # Летищата (docs/embed/data/airports.json) — за airport-nowcast; грешка тук не спира пуска
+    try:
+        from src.output.airports_export import export_airports
+        export_airports(composites, forecast, blended, blend_times,
+                        li_frames=li_frames, V=forecast.get("motion"), icon_data=icon_data)
+    except Exception as e:
+        log.warning(f"  Летища (airports.json): {e}")
+
     # Копирай картите в docs/ за GitHub Pages
     import shutil
     pages_maps = os.path.join(BASE_DIR, "docs", "maps")
