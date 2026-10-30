@@ -27,12 +27,25 @@
     static_low_top_km, но пикселът вече е „подозрителен“ по статистиката (freq ≥ static_freq).
   Само на север от 43° N (зоната на румънския радар). Мерено на 21.10 02:20–05:10 UTC:
   махнати 79% от фалшивото ехо по склона на Стара планина.
+
+Трето — шипове и единични точки (spike_filter, 30.10.2026), по всеки кадър и целия домейн:
+  • шип = ядро ≥ spike_dbz от най-много spike_max_px пиксела, поне spike_db над медианата
+    на околността spike_box×spike_box → става медианата. Освен ако е растяща клетка: в
+    предишния кадър (10 мин) наблизо (spike_prev_box) е имало ехо най-много spike_growth_db
+    по-слабо. Истински Cb не изскача от нищо до 60 dBZ за 10 мин и с ядро ≤ 4 km²;
+    по-голямо ядро, мълнии или растеж отпреди → не се пипа. Истинското ядро расте постепенно (~5–10 dB/km), не с 20+ dB в един
+    пиксел. 30.10 06:00: 62 dBZ в 2 px на вр. Ком сред сухо → ANVIL го размаза до 🔴 на +60;
+    също 51 dBZ в морето при Констанца, 56 dBZ сред 20–25 dBZ дъжд в Северозапада;
+  • петно ехо (8-свързано) под speck_min_px пиксела → сухо (картата и без това не ги рисува,
+    но прогнозата ги местеше и размазваше);
+  • където има мълнии — не се пипа.
 """
 
 import os, sys, logging
 import datetime as dt
 import numpy as np
-from scipy.ndimage import uniform_filter, binary_dilation
+from scipy.ndimage import (uniform_filter, binary_dilation, median_filter, maximum_filter,
+                           label, generate_binary_structure)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from config.settings import CLUTTER
@@ -174,6 +187,54 @@ def sea_filter(composites: list[dict]) -> None:
                 + (f" (без ETOP — твърд праг в {hard} кадъра)" if hard else ""))
 
 
+def spike_filter(composites: list[dict], ltg_fn=None, cfg: dict = None) -> None:
+    """Шипове → медианата на околността; петна под speck_min_px → сухо. На място."""
+    cfg = cfg or CLUTTER
+    if not composites or not cfg.get("spike_enabled", True):
+        return
+    s8 = generate_binary_structure(2, 2)
+    n_spk, n_spe, n_grow, mx = [], [], 0, 0.0
+    prev = None                                   # предишният кадър, преди филтъра
+    order = sorted(range(len(composites)), key=lambda i: composites[i]["timestamp"] or 0)
+    for c in (composites[i] for i in order):
+        d = c["dbz"]
+        cov = np.isfinite(d)
+        z = np.where(cov, d, 0.0)
+        z_orig = z.copy()
+        keep = np.zeros(d.shape, bool)
+        if ltg_fn is not None:
+            cnt = ltg_fn(c)
+            if cnt is not None:
+                keep = cnt >= 1
+        med = median_filter(z, size=cfg["spike_box"])
+        hot = cov & (z >= cfg["spike_dbz"])
+        lab_h, n_h = label(hot, structure=s8)
+        small = np.zeros(d.shape, bool)
+        if n_h:
+            small = (lab_h > 0) & (np.bincount(lab_h.ravel())[lab_h] <= cfg["spike_max_px"])
+        spk = small & (z - med >= cfg["spike_db"]) & ~keep
+        if prev is not None and spk.any():
+            # растяща клетка: 10 мин по-рано наблизо е имало ехо до spike_growth_db по-слабо
+            grow = spk & (maximum_filter(prev, size=cfg["spike_prev_box"]) >= z - cfg["spike_growth_db"])
+            n_grow += int(grow.sum())
+            spk &= ~grow
+        prev = z_orig
+        if spk.any():
+            mx = max(mx, float(z[spk].max()))
+            d[spk] = med[spk]
+        echo = cov & (np.where(cov, d, 0.0) >= cfg["echo_dbz"])
+        lab, n = label(echo, structure=s8)
+        spe = np.zeros(d.shape, bool)
+        if n:
+            size = np.bincount(lab.ravel())
+            spe = (lab > 0) & (size[lab] < cfg["speck_min_px"]) & ~keep
+            d[spe] = 0.0
+        n_spk.append(int(spk.sum())); n_spe.append(int(spe.sum()))
+    logger.info(f"  Шипове: {n_spk} px" + (f" (max {mx:.0f} dBZ)" if mx else "")
+                + (f", оставени като растящи клетки: {n_grow} px" if n_grow else "")
+                + f"; петна под {cfg['speck_min_px']} px: {n_spe} px")
+
+
 def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None:
     """Обновява статистиката с новите кадри и маха clutter от всички composites (на място)."""
     if not composites:
@@ -184,6 +245,15 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
         logger.warning(f"  Море: {e}")
     cfg = CLUTTER
     lat, lon = composites[-1]["lat"], composites[-1]["lon"]
+
+    ltg_fn = None
+    if li_frames:
+        from src.nowcast.lightning_boost import li_window
+        ltg_fn = lambda c: li_window(li_frames, c["timestamp"], lat, lon)[0]
+    try:
+        spike_filter(composites, ltg_fn)      # шипове и единични точки — също преди статистиката
+    except Exception as e:
+        logger.warning(f"  Шипове: {e}")
     freq, last, src = _load_state(lat, lon)
 
     n_new = 0
@@ -221,11 +291,6 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
         logger.info(f"  Clutter: няма маркирани пиксели (статистика: {src}, +{n_new} кадъра; "
                     f"ETOP кадри: {n_et}){st_note}")
         return
-
-    ltg_fn = None
-    if li_frames:
-        from src.nowcast.lightning_boost import li_window
-        ltg_fn = lambda c: li_window(li_frames, c["timestamp"], lat, lon)[0]
 
     removed = []
     for comp in composites:
