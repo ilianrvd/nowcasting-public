@@ -16,17 +16,19 @@
 Иска се площ, не единичен пиксел — шум и отражения от терена (румънския
 composite) иначе палят цветове от нищо. Причината се пише в sites.json ("why").
   🟢 иначе
+Летищата (тип „летище“, ICAO в скоби в името): METAR с валеж ги прави поне 🟡
+(TS → 🔴) в началото — виж settings.METAR_SITES и _metar_leads.
 Прогнозните кадри са от blend-а (радар → H40B → ICON); ≥45 dBZ там идва от
 усилването с мълнии или от LPI ядрата на ICON, т.е. отразява конвекция.
 """
 
-import os, sys, csv, json, logging, shutil
+import os, re, sys, csv, json, logging, shutil
 import datetime as dt
 from zoneinfo import ZoneInfo
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import BASE_DIR, WIND
+from config.settings import BASE_DIR, WIND, METAR_SITES
 
 logger = logging.getLogger("output.web")
 
@@ -167,6 +169,56 @@ def _status(dbz, ltg, masks, nodata=None):
     return "green", why
 
 
+# ── METAR за летищата ─────────────────────────────────────
+_RANK = {None: -1, "nodata": 0, "green": 0, "yellow": 1, "red": 2}
+_ICAO = re.compile(r"\(([A-Z]{4})\)")
+
+
+def site_icao(s):
+    """ICAO на старт от тип „летище“ (от името, напр. „Летище София (LBSF)“), иначе None."""
+    m = _ICAO.search(s.get("name", ""))
+    return m.group(1) if m and "летище" in s.get("type", "").lower() else None
+
+
+def _metar_leads(mt, t0, leads, fields, idx20, cfg=METAR_SITES):
+    """
+    METAR с валеж → (статус, текст) или None за всяко водещо време.
+    „Следа“: при +0 има облак до track_km → важи, докато движението държи облак
+    там (до track_max_min); при SH/TS спира с облака, при обложен валеж — не
+    по-рано от задържането. „Сляпо“: няма облак → задържане hold_h / trend_hold_h.
+    """
+    def near(f):
+        return f is not None and bool((np.nan_to_num(f[idx20], nan=-99.0) >= cfg["echo_dbz"]).any())
+
+    track = near(fields.get(0))
+    hold_h = cfg["trend_hold_h"] if mt["trend_precip"] else cfg["hold_h"]
+    txt = f"METAR {mt['time']:%H:%M} UTC: {' '.join(mt['wx'])}"
+    out = []
+    for m in leads:
+        age_h = (t0 + dt.timedelta(minutes=m) - mt["time"]).total_seconds() / 3600
+        if track and m <= cfg["track_max_min"] and near(fields.get(m)):
+            ok = True
+        elif track and mt["shower"]:
+            ok = False                        # конвективният облак е излязъл
+        else:
+            ok = age_h <= hold_h
+        red = mt["ts"] and m <= cfg["ts_red_max_min"]          # TS: червено само в началото
+        out.append(("red" if red else "yellow", txt) if ok else None)
+    return out, track
+
+
+def _apply_metar(st, why, mlist):
+    """Статусът не пада под METAR; причината от METAR отива отпред."""
+    for i, mw in enumerate(mlist):
+        if mw is None or st[i] is None:
+            continue
+        c, w = mw
+        if _RANK[c] > _RANK[st[i]]:
+            st[i], why[i] = c, f"{w} · {why[i]}" if why[i] else w
+        else:
+            why[i] = f"{why[i]} · {w}" if why[i] else w
+
+
 # ── Вятър за стартовете ───────────────────────────────────
 _DIR = {"С": 0, "СИ": 45, "И": 90, "ЮИ": 135, "Ю": 180, "ЮЗ": 225, "З": 270, "СЗ": 315}
 _DIR_NAME = ["С", "ССИ", "СИ", "ИСИ", "И", "ИЮИ", "ЮИ", "ЮЮИ",
@@ -275,7 +327,7 @@ def _lightning_points(li, lat, lon, step=0.1):
     return [[k[0] * step, k[1] * step, int(v)] for k, v in cells.items()]
 
 
-def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=None):
+def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=None, metars=None):
     comp = forecast["last_composite"]
     lat, lon = comp["lat"], comp["lon"]
     t0 = comp["timestamp"]
@@ -376,6 +428,20 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
             sw = [_status(f, li if m == 0 else None, mk, nd) for (m, f, _), nd in zip(frames, nodata)]
             rec = {**s, "status": st, "why": why,
                    "status_frames": [c for c, _ in sw], "why_frames": [w for _, w in sw]}
+            ic = site_icao(s)
+            mt = (metars or {}).get(ic) if ic and METAR_SITES.get("enabled", True) else None
+            if mt and mt["precip"] and (now - mt["time"]).total_seconds() <= METAR_SITES["stale_min"] * 60:
+                fields = {m: f for m, f, _ in frames}
+                ml, track = _metar_leads(mt, t0, SITE_LEADS, fields, mk[0])
+                _apply_metar(rec["status"], rec["why"], ml)
+                mf, _ = _metar_leads(mt, t0, [m for m, _, _ in frames], fields, mk[0])
+                _apply_metar(rec["status_frames"], rec["why_frames"], mf)
+                rec["metar"] = {"time": mt["time"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                "wx": mt["wx"], "mode": "следа" if track else "сляпо"}
+                upto = max((m for m, x in zip(SITE_LEADS, ml) if x), default=None)
+                logger.info(f"  METAR {ic}: {' '.join(mt['wx'])} ({'следа' if track else 'сляпо'})"
+                            + (f" → {'червено/жълто' if mt['ts'] else 'жълто'} до +{upto} мин" if upto is not None
+                               else " → не важи за таблицата"))
             if md_zone is not None:              # кръгът на старта е предимно в зоната „по модел“
                 in_md = float(md_zone[mk[1]].mean()) > 0.5 if mk[1][0].size else False
                 if in_md:

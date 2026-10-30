@@ -292,11 +292,20 @@ def main():
                         blended, blend_times)
 
     # Публичната страница (docs/embed/): кадри за Leaflet + таблица за стартовете
+    metars = None
+    try:                                    # METAR за летищата (точките на страницата)
+        from config.settings import METAR_SITES, AIRPORTS_EXPORT
+        if METAR_SITES.get("enabled", True):
+            from src.ingest.metar import fetch_metars
+            metars = fetch_metars(list(AIRPORTS_EXPORT["airports"]))
+    except Exception as e:
+        log.warning(f"  METAR: {e} — летищата само по радар/сателит")
     try:
         from src.output.web_export import export_web
         idat = icon_data or {}
         export_web(forecast, blended, blend_times, winds=idat.get("winds"),
-                   wind_grid=(idat["lat"], idat["lon"]) if idat.get("winds") else None)
+                   wind_grid=(idat["lat"], idat["lon"]) if idat.get("winds") else None,
+                   metars=metars)
     except Exception as e:
         log.warning(f"  Web експорт: {e}")
 
