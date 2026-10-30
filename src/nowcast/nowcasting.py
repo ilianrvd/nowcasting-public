@@ -317,7 +317,10 @@ def run_sprog(composites, n_leadtimes=None, n_cascade_levels=None, wind700=None)
             R_fc = extrapolate(R[-1], V, n_leadtimes)
 
     fc_dbz = r_to_dbz(np.clip(R_fc, 0.01, None))
-    fc_dbz[R_fc < 0.1] = np.nan
+    # Под прага на композита (15 dBZ) → сухо, както в наблюдението: иначе размазаният
+    # ръб на прогнозата излиза на картата като ореол, който го няма на кадъра +0.
+    from src.composite.composite import DBZ_MIN
+    fc_dbz[(R_fc < 0.1) | (fc_dbz < DBZ_MIN)] = np.nan
     ref_time = composites[-1]["timestamp"]
     fc_times = [ref_time + dt.timedelta(minutes=ts * (i + 1))
                 for i in range(n_leadtimes)]
