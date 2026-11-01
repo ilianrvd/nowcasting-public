@@ -260,6 +260,19 @@ def main():
         else:
             comp["sat_missing"] = True
             log.warning("  H40B липсва — зоната без радар е празна на nowcast картата, ICON от +0 в blend-а")
+    # Слабото ехо на румънския радар (7–15 dBZ) за картата — само ако H40B го потвърждава
+    weak_layer = None
+    try:
+        from config.settings import WEAK_RADAR
+        iabg_on = [s for s in comp.get("sources", []) if s.startswith("iabg_")]
+        if WEAK_RADAR.get("enabled", True) and iabg_on:
+            # с ИАБГ на юг (от 15 dBZ) слабото ехо само на север пак би дало черта при 43° N
+            log.info(f"  Слабо ехо на радара: изключено — активни {', '.join(iabg_on)}")
+        elif WEAK_RADAR.get("enabled", True) and isinstance(sat_layer, SatelliteLayer):
+            from src.blend.satellite_fill import WeakRadarLayer
+            weak_layer = WeakRadarLayer(comp, sat_layer, forecast["motion"], real_ts)
+    except Exception as e:
+        log.warning(f"  Слабо ехо на радара: {e}")
     pool.shutdown(wait=False)
 
     # ── 8. BLENDING ───────────────────────────────────────
@@ -305,7 +318,7 @@ def main():
         idat = icon_data or {}
         export_web(forecast, blended, blend_times, winds=idat.get("winds"),
                    wind_grid=(idat["lat"], idat["lon"]) if idat.get("winds") else None,
-                   metars=metars)
+                   metars=metars, weak=weak_layer)
     except Exception as e:
         log.warning(f"  Web експорт: {e}")
 

@@ -20,7 +20,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from config.settings import DOMAIN, COVERAGE_MASKS, IABG_RADARS, RAINVIEWER_RADARS
+from config.settings import DOMAIN, COVERAGE_MASKS, IABG_RADARS, RAINVIEWER_RADARS, WEAK_RADAR
 
 logger = logging.getLogger("composite")
 
@@ -101,6 +101,7 @@ def create_composite(frames, ref_time, target_lat, target_lon):
     lon2d, lat2d = np.meshgrid(target_lon, target_lat)
     comp = np.full(lat2d.shape, np.nan, dtype=np.float32)
     covered = np.zeros(lat2d.shape, dtype=bool)
+    weak = np.full(lat2d.shape, np.nan, dtype=np.float32)   # 7–15 dBZ, само WEAK_RADAR["sources"]
     sources = []
 
     for f in frames:
@@ -111,6 +112,9 @@ def create_composite(frames, ref_time, target_lat, target_lon):
         layer = np.where(cov, np.nan_to_num(reproj, nan=0.0), np.nan)
         comp = np.fmax(comp, layer)
         covered |= cov
+        if src in WEAK_RADAR.get("sources", ()):
+            w = cov & (layer >= WEAK_RADAR["min_dbz"]) & (layer < DBZ_MIN)
+            weak[w] = layer[w]
         sources.append(src)
         d = (f["timestamp"] - ref_time).total_seconds()
         logger.info(f"    {src}: {f['timestamp']:%H:%M:%S} Δ={d:+.0f}s")
@@ -128,6 +132,7 @@ def create_composite(frames, ref_time, target_lat, target_lon):
         "timestamp": ref_time,
         "dbz": comp,
         "coverage": covered,
+        "dbz_weak": weak,
         "lat": target_lat,
         "lon": target_lon,
         "sources": sources,

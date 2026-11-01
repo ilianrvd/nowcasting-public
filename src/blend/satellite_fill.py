@@ -112,3 +112,49 @@ def fill_nowcast_for_map(forecast: dict, cov_w: np.ndarray, sat_layer) -> None:
         out[i] = to_dbz(cov_w * to_z(fc[i]) + (1.0 - cov_w) * sat_layer.z_at(t))
     forecast["forecast_dbz_plot"] = out
     comp["sat_on_map"] = True
+
+
+class WeakRadarLayer:
+    """
+    Слабото ехо на румънския радар (7–15 dBZ, comp["dbz_weak"]) — само за картата,
+    само където H40B потвърждава валеж в радиус gate_km (settings.WEAK_RADAR).
+    at(t) → dBZ поле, преместено по V до момента t (NaN = няма); след max_lead_min → None.
+    """
+
+    def __init__(self, comp: dict, sat_layer, V: np.ndarray, ts_min: float, cfg: dict = None):
+        from scipy.ndimage import distance_transform_edt, label
+        from config.settings import WEAK_RADAR, SATELLITE
+        cfg = cfg or WEAK_RADAR
+        self.cfg, self.t0 = cfg, comp["timestamp"]
+        w = comp.get("dbz_weak")
+        lat = comp["lat"]
+        km_px = abs(float(lat[1] - lat[0])) * 111.0
+        z_min = 200.0 * SATELLITE["min_rate_mmh"] ** 1.6           # H40B ≥ min_rate
+        rain = sat_layer.z_at(self.t0) >= z_min
+        gate = distance_transform_edt(~rain) * km_px <= cfg["gate_km"] if rain.any() else rain
+        ok = np.isfinite(w) & gate if w is not None else np.zeros(lat.shape + comp["lon"].shape, bool)
+        # единични точки (под 4 px) — шум, както на картата
+        lab, n = label(ok)
+        if n:
+            size = np.bincount(lab.ravel())
+            ok &= size[lab] >= 4
+        self.dbz = np.where(ok, w, np.nan).astype(np.float32) if w is not None else None
+        n_all = int(np.isfinite(w).sum()) if w is not None else 0
+        logger.info(f"Слабо ехо на радара (7–15 dBZ): {n_all} px, потвърдени от H40B {int(ok.sum())} px "
+                    f"(в {cfg['gate_km']:.0f} km) → на картата до +{cfg['max_lead_min']} мин")
+        self.vx = (V[0] / ts_min).astype(np.float32)
+        self.vy = (V[1] / ts_min).astype(np.float32)
+        ny, nx = ok.shape
+        self.yy, self.xx = np.mgrid[0:ny, 0:nx].astype(np.float32)
+
+    def at(self, t: dt.datetime):
+        if self.dbz is None:
+            return None
+        k = (t - self.t0).total_seconds() / 60.0
+        if k > self.cfg["max_lead_min"] + 1:
+            return None
+        if abs(k) < 0.5:
+            return self.dbz
+        from scipy.ndimage import map_coordinates
+        coords = [self.yy - self.vy * k, self.xx - self.vx * k]
+        return map_coordinates(self.dbz, coords, order=0, mode="constant", cval=np.nan)

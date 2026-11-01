@@ -327,7 +327,8 @@ def _lightning_points(li, lat, lon, step=0.1):
     return [[k[0] * step, k[1] * step, int(v)] for k, v in cells.items()]
 
 
-def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=None, metars=None):
+def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=None, metars=None,
+               weak=None):
     comp = forecast["last_composite"]
     lat, lon = comp["lat"], comp["lon"]
     t0 = comp["timestamp"]
@@ -361,6 +362,16 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
         f = from_blend(m)
         if f is not None:
             frames.append((m, f, "радар → модел" if m <= 150 else "модел ICON"))
+    if weak is not None:                    # слабото ехо на радара, потвърдено от H40B (WeakRadarLayer)
+        def add_weak(m, f):
+            w = weak.at(t0 + dt.timedelta(minutes=m))
+            if w is None:
+                return f
+            f = np.array(f, dtype=np.float32, copy=True)
+            fill = np.isfinite(w) & ~(np.nan_to_num(f, nan=-99.0) >= w)
+            f[fill] = w[fill]
+            return f
+        frames = [(m, add_weak(m, f) if f is not None else None, src) for m, f, src in frames]
     frames = [(m, _clean(f), src) for m, f, src in frames if f is not None]
 
     # „Няма данни“: без радар и без сателит, докато ICON още не е поел (тегло < 50%).

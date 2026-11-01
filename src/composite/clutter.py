@@ -122,9 +122,20 @@ def static_mask(composites: list[dict], freq: np.ndarray, cfg: dict = None):
     return m, (len(dbzs), share)
 
 
-def clutter_mask(freq: np.ndarray, cfg: dict = None) -> np.ndarray:
+def clutter_mask(freq: np.ndarray, cfg: dict = None, cov: np.ndarray = None) -> np.ndarray:
+    """cov — пикселите с радар: околността се осреднява само по тях. Иначе на ръба на
+    покритието (43° N без ИАБГ, краищата на домейна) половината околност е „суха“ и
+    продължителен валеж там минава за земно отражение (01.11.2026: в тест 585 px по
+    ивицата 43.00–43.15° N); с ИАБГ на юг (април) ефектът изчезва — маската щеше да
+    сменя поведението си между сезоните."""
     cfg = cfg or CLUTTER
-    local = uniform_filter(freq.astype(np.float32), size=cfg["box_px"], mode="constant")
+    f = freq.astype(np.float32)
+    if cov is None:
+        local = uniform_filter(f, size=cfg["box_px"], mode="constant")
+    else:
+        num = uniform_filter(np.where(cov, f, 0.0).astype(np.float32), size=cfg["box_px"], mode="constant")
+        den = uniform_filter(cov.astype(np.float32), size=cfg["box_px"], mode="constant")
+        local = np.where(den > 0.05, num / np.maximum(den, 1e-6), 0.0)
     m = (freq >= cfg["freq_min"]) & (freq >= cfg["contrast"] * local)
     if cfg.get("dilate_px", 0) > 0 and m.any():
         m = binary_dilation(m, iterations=cfg["dilate_px"])
@@ -165,13 +176,19 @@ def _save_state(freq, last_time, lat, lon):
 
 def sea_filter(composites: list[dict]) -> None:
     """Черно море (ROMANIA_SEA): под min_dbz се маха само ехо без връх (ETOP).
-    Без ETOP файл за кадъра — твърдият праг както преди."""
+    Без ETOP файл за кадъра — твърдият праг както преди.
+    Само в зоната на румънския радар: ETOP е негов продукт, а морските отражения са
+    негови. Южно от 43° N морето е на Старо село (от април) — там не се пипа, иначе
+    всичко под 30 dBZ източно от 28° E (дъждът към Бургас) изчезваше."""
     from config.settings import ROMANIA_SEA as SEA
+    from src.composite.composite import coverage_mask
     if SEA.get("mode") != "no_top" or not composites:
         return
     lat, lon = composites[-1]["lat"], composites[-1]["lon"]
-    box = ((lat[:, None] >= SEA["lat"][0]) & (lat[:, None] <= SEA["lat"][1]) &
-           (lon[None, :] >= SEA["lon"][0]) & (lon[None, :] <= SEA["lon"][1]))
+    lon2d, lat2d = np.meshgrid(lon, lat)
+    box = ((lat2d >= SEA["lat"][0]) & (lat2d <= SEA["lat"][1]) &
+           (lon2d >= SEA["lon"][0]) & (lon2d <= SEA["lon"][1]) &
+           coverage_mask("romania_composite", lat2d, lon2d))
     kept, cut, hard = [], [], 0
     for c in composites:
         d = c["dbz"]
@@ -183,6 +200,10 @@ def sea_filter(composites: list[dict]) -> None:
             m = weak & ~np.isfinite(r[0])
         kept.append(int((weak & ~m).sum())); cut.append(int(m.sum()))
         d[m] = 0.0
+        w = c.get("dbz_weak")                    # слабото ехо 7–15 (за картата): същото правило
+        if w is not None:
+            ww = box & np.isfinite(w)
+            w[ww if r is None else (ww & ~np.isfinite(r[0]))] = np.nan
     logger.info(f"  Море: под {SEA['min_dbz']:.0f} dBZ без връх махнато {cut}, с връх оставено {kept}"
                 + (f" (без ETOP — твърд праг в {hard} кадъра)" if hard else ""))
 
@@ -268,7 +289,7 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
         last, n_new = t, n_new + 1
     _save_state(freq, last, lat, lon)
 
-    mask = clutter_mask(freq)
+    mask = clutter_mask(freq, cov=np.isfinite(composites[-1]["dbz"]))
     n_learn = int(mask.sum())
     try:
         st, (n_et, top_share) = static_mask(composites, freq)
@@ -306,6 +327,8 @@ def filter_clutter(composites: list[dict], li_frames: list[dict] = None) -> None
                 m &= ~np.isfinite(r[0])
         d[m] = 0.0                                       # в покритието, но сухо
         removed.append(int(m.sum()))
+        if comp.get("dbz_weak") is not None:             # слабото ехо (за картата) — също
+            comp["dbz_weak"][mask] = np.nan
     logger.info(f"  Clutter: маркирани {int(mask.sum())} px (по статистика {n_learn}, неподвижно ехо "
                 f"без връх {n_static}; статистика: {src}, +{n_new} кадъра; ETOP кадри: {n_et}, "
                 f"ехо с връх: {top_share:.0%}{st_note}); "
