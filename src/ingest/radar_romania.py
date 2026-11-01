@@ -119,16 +119,31 @@ def download_romania_composite() -> str | None:
     Опитва да свали последния COMPOSITE от meteoromania.ro/radar/.
     Връща локалния път или None.
     """
+    import time
     import requests
 
     url = ROMANIA["base_url"]
     logger.info(f"Сваляне от {url}")
 
-    try:
-        resp = requests.get(url, timeout=20)
-        resp.raise_for_status()
-    except Exception as e:
-        logger.error(f"Грешка при достъп до {url}: {e}")
+    # Сървърът понякога не отговаря за минута-две (01.11.2026 11:47 UTC — таймаут, пускът
+    # спря, дупка ~1 ч на страницата) → до TRIES опита с пауза PAUSE_S.
+    TRIES, PAUSE_S = 3, 30
+    resp = None
+    for k in range(1, TRIES + 1):
+        try:
+            resp = requests.get(url, timeout=20)
+            resp.raise_for_status()
+            if k > 1:
+                logger.info(f"  {url}: отговори от опит {k}")
+            break
+        except Exception as e:
+            resp = None
+            if k < TRIES:
+                logger.warning(f"  {url}: опит {k}/{TRIES} неуспешен ({type(e).__name__}) — нов след {PAUSE_S} s")
+                time.sleep(PAUSE_S)
+            else:
+                logger.error(f"Грешка при достъп до {url} ({TRIES} опита): {e}")
+    if resp is None:
         return None
 
     # Парсвай Index of /radar/COMPOSITE/ за dBZ файлове
@@ -156,14 +171,20 @@ def download_romania_composite() -> str | None:
         if os.path.exists(local_path):
             continue
         logger.info(f"  Сваляне: {fname}")
-        try:
-            resp = requests.get(file_url, timeout=60)
-            resp.raise_for_status()
-            with open(local_path, 'wb') as f:
-                f.write(resp.content)
-            logger.info(f"  Запазен: {local_path}")
-        except Exception as e:
-            logger.error(f"  Грешка: {e}")
+        for k in (1, 2):                         # файлът — до 2 опита
+            try:
+                resp = requests.get(file_url, timeout=60)
+                resp.raise_for_status()
+                with open(local_path, 'wb') as f:
+                    f.write(resp.content)
+                logger.info(f"  Запазен: {local_path}")
+                break
+            except Exception as e:
+                if k == 1:
+                    logger.warning(f"  {fname}: {type(e).__name__} — още един опит след 10 s")
+                    time.sleep(10)
+                else:
+                    logger.error(f"  Грешка: {e}")
     return ROMANIA_DIR
 
 
