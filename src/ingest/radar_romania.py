@@ -125,9 +125,11 @@ def download_romania_composite() -> str | None:
     url = ROMANIA["base_url"]
     logger.info(f"Сваляне от {url}")
 
-    # Сървърът понякога не отговаря за минута-две (01.11.2026 11:47 UTC — таймаут, пускът
-    # спря, дупка ~1 ч на страницата) → до TRIES опита с пауза PAUSE_S.
-    TRIES, PAUSE_S = 3, 30
+    # Сървърът понякога не отговаря за няколко минути (01.11 11:47 UTC, 02.11 06:47 UTC —
+    # таймаут, пускът спря, дупка ~1 ч на страницата) → до TRIES опита с растяща пауза
+    # (30, 60, 90 s — общо ~5 мин; workflow-ът има лимит 20 мин).
+    PAUSES = (30, 60, 90)
+    TRIES = len(PAUSES) + 1
     resp = None
     for k in range(1, TRIES + 1):
         try:
@@ -139,8 +141,8 @@ def download_romania_composite() -> str | None:
         except Exception as e:
             resp = None
             if k < TRIES:
-                logger.warning(f"  {url}: опит {k}/{TRIES} неуспешен ({type(e).__name__}) — нов след {PAUSE_S} s")
-                time.sleep(PAUSE_S)
+                logger.warning(f"  {url}: опит {k}/{TRIES} неуспешен ({type(e).__name__}) — нов след {PAUSES[k - 1]} s")
+                time.sleep(PAUSES[k - 1])
             else:
                 logger.error(f"Грешка при достъп до {url} ({TRIES} опита): {e}")
     if resp is None:
