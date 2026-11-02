@@ -340,7 +340,7 @@ def export_web(forecast, blended=None, blend_times=None, winds=None, wind_grid=N
 
     # ── Кадри: (водещо време, поле, източник) ─────────────
     obs = comp.get("dbz_obs_plot", comp.get("dbz_radar", comp["dbz"]))
-    frames = [(0, obs, "наблюдение")]
+    frames = [(0, obs, "без радар — сателит/модел" if comp.get("no_radar") else "наблюдение")]
     fc_dbz = forecast.get("forecast_dbz_plot", forecast["forecast_dbz"])
     fc_times = forecast["timestamps"]
 

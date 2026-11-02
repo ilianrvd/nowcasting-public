@@ -132,12 +132,15 @@ def main():
         except Exception as e:
             log.warning(f"  {rid}: {e}")
 
-    if not all_frames:
-        log.error("ФАТАЛНО: Няма данни от нито един радар!")
-        sys.exit(1)
-
-    total_frames = sum(len(v) for v in all_frames.values())
-    log.info(f"  Общо: {total_frames} frames от {len(all_frames)} източника")
+    no_radar = not all_frames
+    if no_radar:
+        # Румънският сървър понякога не отговаря с минути, а ИАБГ е извън сезона →
+        # вместо да спре, пускът минава с H40B (или ICON + мълнии) за целия домейн.
+        log.error("Няма данни от нито един радар — пускът продължава БЕЗ РАДАР "
+                  "(H40B или ICON + мълнии за целия домейн)")
+    else:
+        total_frames = sum(len(v) for v in all_frames.values())
+        log.info(f"  Общо: {total_frames} frames от {len(all_frames)} източника")
 
     # ── 3. МЪЛНИИ (H40B вече се тегли във фон от началото на пуска) ──
 
@@ -160,19 +163,30 @@ def main():
 
     # ── 4. COMPOSITE ──────────────────────────────────────
     log.info("── Фаза 3: Composite ──")
-    from src.composite.composite import create_composite_series
-    composites = create_composite_series(all_frames, n_composites=args.n_frames)
+    from src.composite.composite import create_composite_series, empty_composite
+    if no_radar:
+        h40b_t = None
+        if h40b_future is not None:
+            try:
+                h = h40b_future.result(timeout=240)
+                h40b_t = h["time"] if h is not None else None
+            except Exception:
+                pass
+        composites = [empty_composite(h40b_t)]
+    else:
+        composites = create_composite_series(all_frames, n_composites=args.n_frames)
 
     if not composites:
         log.error("ФАТАЛНО: Няма composites!")
         sys.exit(1)
 
     # ── 4a. ЗЕМНИ ОТРАЖЕНИЯ (clutter) — преди мълниите и движението ──
-    try:
-        from src.composite.clutter import filter_clutter
-        filter_clutter(composites, li_frames)
-    except Exception as e:
-        log.warning(f"  Clutter: {e}")
+    if not no_radar:
+        try:
+            from src.composite.clutter import filter_clutter
+            filter_clutter(composites, li_frames)
+        except Exception as e:
+            log.warning(f"  Clutter: {e}")
 
     # ── 4b. УСИЛВАНЕ С МЪЛНИИ (преди прогнозата) ─────────
     li_last = None
@@ -204,9 +218,13 @@ def main():
 
     # ── 6. S-PROG ─────────────────────────────────────────
     log.info("── Фаза 4: Nowcast (ANVIL / S-PROG) ──")
-    from src.nowcast.nowcasting import run_sprog
-    forecast = run_sprog(composites,
-                         wind700=icon_data.get("wind700") if icon_data else None)
+    from src.nowcast.nowcasting import run_sprog, no_radar_forecast
+    if no_radar:
+        forecast = no_radar_forecast(composites[-1],
+                                     wind700=icon_data.get("wind700") if icon_data else None)
+    else:
+        forecast = run_sprog(composites,
+                             wind700=icon_data.get("wind700") if icon_data else None)
 
     if forecast is None:
         log.error("ФАТАЛНО: Nowcast неуспешен!")
@@ -260,6 +278,10 @@ def main():
         else:
             comp["sat_missing"] = True
             log.warning("  H40B липсва — зоната без радар е празна на nowcast картата, ICON от +0 в blend-а")
+    if no_radar and sat_layer is None:
+        log.error("ФАТАЛНО: без радар и без H40B / ICON — няма какво да се покаже")
+        sys.exit(1)
+
     # Слабото ехо на румънския радар (7–15 dBZ) за картата — само ако H40B го потвърждава
     weak_layer = None
     try:
@@ -268,7 +290,7 @@ def main():
         if WEAK_RADAR.get("enabled", True) and iabg_on:
             # с ИАБГ на юг (от 15 dBZ) слабото ехо само на север пак би дало черта при 43° N
             log.info(f"  Слабо ехо на радара: изключено — активни {', '.join(iabg_on)}")
-        elif WEAK_RADAR.get("enabled", True) and isinstance(sat_layer, SatelliteLayer):
+        elif WEAK_RADAR.get("enabled", True) and not no_radar and isinstance(sat_layer, SatelliteLayer):
             from src.blend.satellite_fill import WeakRadarLayer
             weak_layer = WeakRadarLayer(comp, sat_layer, forecast["motion"], real_ts)
     except Exception as e:

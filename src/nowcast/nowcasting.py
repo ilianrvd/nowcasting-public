@@ -100,6 +100,50 @@ REGIONS = {   # (име, условие върху lat/lon) — същите к�
 }
 
 
+def wind_motion(lat, lon, ts, wind700):
+    """V (px за една стъпка ts) от вятъра на 700 hPa (ICON) върху решетката lat × lon."""
+    from scipy.interpolate import RegularGridInterpolator
+    lon2d, lat2d = np.meshgrid(lon, lat)
+    pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
+
+    def rg(f):
+        it = RegularGridInterpolator((wind700["lat"], wind700["lon"]), f,
+                                     bounds_error=False, fill_value=None)
+        return it(pts).reshape(lat2d.shape)
+
+    k = NOWCAST["wind_check"].get("speed_factor", 1.0)
+    px_per_ms = ts * 60.0 / 1000.0 / DOMAIN["resolution_km"]        # m/s → px/стъпка
+    return np.stack([k * rg(wind700["u"]) * px_per_ms,
+                     k * rg(wind700["v"]) * px_per_ms]).astype(np.float32)
+
+
+def no_radar_forecast(comp, wind700=None, ts=10, n_leadtimes=None):
+    """
+    Резерв без радар (румънският сървър не отговаря, ИАБГ извън сезона): празна
+    радарна прогноза, движение от ICON 700 hPa (без вятър — неподвижно). Зоната
+    се попълва от H40B (или ICON + мълнии) както зоната без радар обикновено.
+    """
+    n_leadtimes = n_leadtimes or max(1, HORIZON_MIN // ts)
+    ny, nx = comp["dbz"].shape
+    if wind700 is not None:
+        V, src = wind_motion(comp["lat"], comp["lon"], ts, wind700), "ICON 700 hPa"
+    else:
+        V, src = np.zeros((2, ny, nx), np.float32), "няма (без вятър)"
+    motion = motion_summary(V, comp, ts)
+    motion["source"] = src
+    motion["regions"] = motion_by_region(V, comp, ts, {r: "ICON" for r in REGIONS})
+    comp["motion_info"] = motion
+    logger.info(f"Без радар: движение [{src}] {motion['dir_txt']} {motion['kt']:.0f}KT — "
+                f"прогнозата е само преместване на попълването")
+    return {
+        "forecast_dbz": np.full((n_leadtimes, ny, nx), np.nan, np.float32),
+        "timestamps": [comp["timestamp"] + dt.timedelta(minutes=ts * (i + 1)) for i in range(n_leadtimes)],
+        "motion": V,
+        "last_composite": comp,
+        "method": "без радар",
+    }
+
+
 def check_motion_vs_wind(V, last_comp, ts, wind700):
     """
     Сравнява движението от LK с вятъра на 700 hPa от ICON ПО РЕГИОНИ

@@ -139,6 +139,20 @@ def create_composite(frames, ref_time, target_lat, target_lon):
     }
 
 
+def empty_composite(t=None):
+    """Композит без радар (всичко NaN = извън покритие) — за резерва без радар.
+    t: часът на наблюдението (H40B); без него — сега − 15 мин, надолу до 10 мин."""
+    if t is None:
+        t = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=15)
+        t = t.replace(minute=t.minute - t.minute % GRID_STEP_MIN, second=0, microsecond=0)
+    lat, lon = make_target_grid()
+    shape = (len(lat), len(lon))
+    logger.warning(f"Композит БЕЗ РАДАР за {t:%H:%M} UTC")
+    return {"timestamp": t, "dbz": np.full(shape, np.nan, np.float32),
+            "coverage": np.zeros(shape, bool), "dbz_weak": np.full(shape, np.nan, np.float32),
+            "lat": lat, "lon": lon, "sources": [], "no_radar": True}
+
+
 MIN_SERIES = 4          # ANVIL иска 4 кадъра; под това се пробва без резервите
 
 
