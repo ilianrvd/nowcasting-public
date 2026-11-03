@@ -19,8 +19,12 @@ logger = logging.getLogger("ingest.eumetview")
 WCS = "https://view.eumetsat.int/geoserver/wcs"
 WMS_LI = "https://view.eumetsat.int/geoserver/mtg_fd/wms"
 LI_RES_DEG = 0.02            # ~2 km — решетката на FCI, на която е AFA
-BBOX_LAT = (40.0, 45.0)      # малко по-широко от домейна — за адвекция отвън
+BBOX_LAT = (40.0, 45.0)      # малко по-широко от домейна — за адвекция отвън (мълниите)
 BBOX_LON = (20.5, 30.0)
+# H40B — домейнът + ~150 km (SATELLITE["pad_km"]): невидимият ръб, от който в прогнозата
+# влиза това, което идва отвън (03.11.2026). Пак ~10–20 KB с Deflate.
+H40B_BBOX_LAT = (39.0, 46.0)
+H40B_BBOX_LON = (19.0, 31.5)
 
 
 def _latest_time(cov: str, timeout: float = 90) -> dt.datetime:
@@ -31,16 +35,18 @@ def _latest_time(cov: str, timeout: float = 90) -> dt.datetime:
     return dt.datetime.fromisoformat(end.replace("Z", "+00:00"))
 
 
-def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120, band: str = None):
+def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120, band: str = None,
+                  bbox_lat=None, bbox_lon=None):
     """GetCoverage → (bands, rows, cols), lat_1d (възходящо), lon_1d.
     Сървърът по подразбиране праща некомпресиран float64 на плочки 320×512 — за нашата
     зона ~10 MB, които на GitHub често се прекъсват. С Deflate и само нужния канал е ~10 KB."""
     import tifffile
+    bbox_lat, bbox_lon = bbox_lat or BBOX_LAT, bbox_lon or BBOX_LON
     ts = t.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     params = [("service", "WCS"), ("version", "2.0.1"), ("request", "GetCoverage"),
               ("coverageId", cov), ("format", "image/tiff"),
-              ("subset", f"Lat({BBOX_LAT[0]},{BBOX_LAT[1]})"),
-              ("subset", f"Long({BBOX_LON[0]},{BBOX_LON[1]})"),
+              ("subset", f"Lat({bbox_lat[0]},{bbox_lat[1]})"),
+              ("subset", f"Long({bbox_lon[0]},{bbox_lon[1]})"),
               ("subset", f'time("{ts}")'),
               ("geotiff:compression", "Deflate")]
     if band:
@@ -67,9 +73,9 @@ def _get_coverage(cov: str, t: dt.datetime, timeout: float = 120, band: str = No
         m = tags[34264]
         x0, y0, sx, sy = m[3], m[7], m[0], -m[5]
     else:                                                # резервно: поисканият правоъгълник
-        x0, y0 = BBOX_LON[0], BBOX_LAT[1]
-        sx = (BBOX_LON[1] - BBOX_LON[0]) / cols
-        sy = (BBOX_LAT[1] - BBOX_LAT[0]) / rows
+        x0, y0 = bbox_lon[0], bbox_lat[1]
+        sx = (bbox_lon[1] - bbox_lon[0]) / cols
+        sy = (bbox_lat[1] - bbox_lat[0]) / rows
         logger.debug(f"{cov}: няма GeoTIFF тагове — ползвам bbox")
     lon = x0 + (np.arange(cols) + 0.5) * sx
     lat = y0 - (np.arange(rows) + 0.5) * sy          # отгоре надолу
@@ -139,7 +145,8 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 70,
         arr = None
         for band in (H40B_BAND, H40B_BAND, None):   # 2 опита само с валежа, после и двата канала
             try:
-                arr, lat, lon = _get_coverage("mtg_fd__h40b", t, timeout=45, band=band)
+                arr, lat, lon = _get_coverage("mtg_fd__h40b", t, timeout=45, band=band,
+                                              bbox_lat=H40B_BBOX_LAT, bbox_lon=H40B_BBOX_LON)
                 break
             except Exception as e:
                 last_err = e

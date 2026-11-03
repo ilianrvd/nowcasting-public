@@ -113,10 +113,12 @@ def interpolate_icon(target_time: dt.datetime,
     idx = next((i for i, vt in enumerate(times) if target_time <= vt),
                len(times) - 1)
 
-    # Кеш по час — за 72 blend стъпки има само ~7 различни часа
+    # Кеш по час и решетка — за 72 blend стъпки има само ~7 различни часа; решетката
+    # е в ключа, защото резервът ICON+LI пита и за разширената (невидимия ръб)
     cache = icon_data.setdefault("_dbz_cache", {})
-    if idx in cache:
-        return cache[idx]
+    key = (idx, len(target_lat), len(target_lon), float(target_lat[0]), float(target_lon[0]))
+    if key in cache:
+        return cache[key]
 
     showers = _regrid(icon_data["showers_mm"][idx], icon_data, target_lat, target_lon)
     # Фон от общия валеж (DWD: total_mm; Open-Meteo резерв: precipitation_mm)
@@ -144,7 +146,7 @@ def interpolate_icon(target_time: dt.datetime,
                         f"max {np.nanmax(dbz[core]):.0f} dBZ; ограничени от валежа {int(capped.sum())} px")
 
     dbz = np.clip(dbz, None, DBZ_HARD_CAP).astype(np.float32)
-    cache[idx] = dbz
+    cache[key] = dbz
     return dbz
 
 
@@ -212,9 +214,14 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         rw, iw = blend_weights(minutes, radar_horizon=radar_horizon)
         # Теглото радар/попълване пътува с облаците (виж satellite_fill.advect_weight)
         cw_t = coverage_w
+        known = None                     # 0 там, където източникът е извън невидимия ръб
         if use_cov and sat_layer is not None:
             from src.blend.satellite_fill import advect_weight
             cw_t = advect_weight(sat_layer, coverage_w, target_time, ref_time)
+            if hasattr(sat_layer, "known_at"):
+                known = sat_layer.known_at(target_time)
+                if known.all():
+                    known = None
 
         # ── Радар: избор ПО ВРЕМЕ ────────────────────────
         z_radar = None
@@ -230,7 +237,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
                 iw = 1.0
 
         # ── ICON ─────────────────────────────────────────
-        need_icon = iw > 0
+        need_icon = iw > 0 or (known is not None and rw > 0)
         if need_icon and icon_data is not None:
             d_icon = interpolate_icon(target_time, icon_data, target_lat, target_lon)
             z_icon = dbz_to_z(d_icon)
@@ -249,7 +256,11 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         # ── Z-space смесване ─────────────────────────────
         if use_cov and rw > 0:
             if sat_layer is not None:
-                z_obs = cw_t * z_radar + (1.0 - cw_t) * sat_layer.z_at(target_time)
+                z_fill = sat_layer.z_at(target_time)
+                if known is not None and icon_data is not None:
+                    # отвъд невидимия ръб не знаем какво идва → ICON
+                    z_fill = known * z_fill + (1.0 - known) * z_icon
+                z_obs = cw_t * z_radar + (1.0 - cw_t) * z_fill
                 z_blend = rw * z_obs + iw * z_icon
             elif icon_data is not None:
                 z_blend = rw * coverage_w * z_radar + iw * z_icon

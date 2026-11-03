@@ -29,7 +29,7 @@ logger = logging.getLogger("ingest.icon_dwd")
 
 FIELDS = ("tot_prec", "rain_con", "snow_con", "lpi_con_max")
 FORECAST_HOURS = 6
-MARGIN_DEG = 0.3          # поле около домейна при изрязване
+MARGIN_DEG = 2.0          # поле около домейна при изрязване (≥ невидимия ръб: 150 km ≈ 1.4° lat, 1.85° lon)
 _session = requests.Session()
 
 

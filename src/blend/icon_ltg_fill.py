@@ -122,8 +122,12 @@ def correct_icon_with_lightning(dbz_icon: np.ndarray, count: np.ndarray | None,
     return out, stats
 
 
-class IconLtgLayer:
-    """ICON (+ LI корекция) като Z поле, което се мести по V до всеки целеви момент."""
+from src.blend.satellite_fill import PaddedAdvection, padded_grid, pad_px
+
+
+class IconLtgLayer(PaddedAdvection):
+    """ICON (+ LI корекция) като Z поле, което се мести по V до всеки целеви момент.
+    Извън домейна (невидимия ръб) — суров ICON; корекцията по мълниите е в домейна."""
 
     def __init__(self, icon_data: dict, li_count, t0: dt.datetime, V: np.ndarray, ts_min: float,
                  target_lat: np.ndarray, target_lon: np.ndarray, cov_w: np.ndarray):
@@ -134,7 +138,14 @@ class IconLtgLayer:
         zone = cov_w < 0.5
         dbz, st = correct_icon_with_lightning(dbz0, li_count, zone, km_per_px)
 
-        self.z = np.where(np.isfinite(dbz), 10.0 ** (dbz / 10.0), 0.0).astype(np.float32)
+        pad = pad_px(target_lat)
+        if pad:
+            plat, plon = padded_grid(target_lat, target_lon, pad)
+            dbzp = np.array(interpolate_icon(t0, icon_data, plat, plon), dtype=np.float32, copy=True)
+            dbzp[pad:dbzp.shape[0] - pad, pad:dbzp.shape[1] - pad] = dbz
+        else:
+            dbzp = dbz
+        self.zp = np.where(np.isfinite(dbzp), 10.0 ** (dbzp / 10.0), 0.0).astype(np.float32)
         self.time = t0
         self.with_ltg = li_count is not None
         self.label = "модел ICON, коригиран по мълнии" if self.with_ltg else "модел ICON"
@@ -142,10 +153,7 @@ class IconLtgLayer:
         self._li, self._zone, self._km = li_count, zone, km_per_px
         self._corr_cache = {}
 
-        self.vx = (V[0] / ts_min).astype(np.float32)
-        self.vy = (V[1] / ts_min).astype(np.float32)
-        ny, nx = self.z.shape
-        self.yy, self.xx = np.mgrid[0:ny, 0:nx].astype(np.float32)
+        self._init_motion(V, ts_min, pad)
 
         run = icon_data.get("run")
         if self.with_ltg:
@@ -175,8 +183,3 @@ class IconLtgLayer:
             self._corr_cache[key], _ = correct_icon_with_lightning(dbz_icon, li, self._zone, self._km)
         return self._corr_cache[key]
 
-    def z_at(self, target_time: dt.datetime) -> np.ndarray:
-        """Z полето, преместено от t0 до target_time (обратна траектория)."""
-        k = (target_time - self.time).total_seconds() / 60.0
-        coords = [self.yy - self.vy * k, self.xx - self.vx * k]
-        return map_coordinates(self.z, coords, order=1, mode="constant", cval=0.0)
