@@ -143,7 +143,9 @@ def fetch_h40b(now: dt.datetime = None, max_age_min: float = 70,
                 last_err = f"последен кадър {t:%H:%M} UTC ({age:.0f} мин) — над {max_age_min:.0f} мин"
             break
         arr = None
-        for band in (H40B_BAND, H40B_BAND, None):   # 2 опита само с валежа, после и двата канала
+        # С по-широкия bbox (03.11.2026) сървърът връща 500 на заявката само за канала с
+        # валежа, а с двата канала минава веднага (с Deflate пак е малко) → двата канала първо.
+        for band in (None, None, H40B_BAND):
             try:
                 arr, lat, lon = _get_coverage("mtg_fd__h40b", t, timeout=45, band=band,
                                               bbox_lat=H40B_BBOX_LAT, bbox_lon=H40B_BBOX_LON)
