@@ -210,6 +210,11 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         blend_times.append(target_time)
 
         rw, iw = blend_weights(minutes, radar_horizon=radar_horizon)
+        # Теглото радар/попълване пътува с облаците (виж satellite_fill.advect_weight)
+        cw_t = coverage_w
+        if use_cov and sat_layer is not None:
+            from src.blend.satellite_fill import advect_weight
+            cw_t = advect_weight(sat_layer, coverage_w, target_time, ref_time)
 
         # ── Радар: избор ПО ВРЕМЕ ────────────────────────
         z_radar = None
@@ -234,7 +239,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
             # края на радарния хоризонт — иначе Z-смесването връща ядрото на модела още от +60 мин.
             if use_cov and rw > 0 and sat_layer is not None and hasattr(sat_layer, "correct_icon"):
                 z_corr = dbz_to_z(sat_layer.correct_icon(d_icon, target_time))
-                wz = (1.0 - coverage_w) * min(1.0, 2.0 * rw)
+                wz = (1.0 - cw_t) * min(1.0, 2.0 * rw)
                 z_icon = (1.0 - wz) * z_icon + wz * z_corr
         else:
             z_icon = np.zeros((ny, nx), dtype=np.float32)
@@ -244,7 +249,7 @@ def blend_nowcast_icon(forecast_dbz: np.ndarray,
         # ── Z-space смесване ─────────────────────────────
         if use_cov and rw > 0:
             if sat_layer is not None:
-                z_obs = coverage_w * z_radar + (1.0 - coverage_w) * sat_layer.z_at(target_time)
+                z_obs = cw_t * z_radar + (1.0 - cw_t) * sat_layer.z_at(target_time)
                 z_blend = rw * z_obs + iw * z_icon
             elif icon_data is not None:
                 z_blend = rw * coverage_w * z_radar + iw * z_icon

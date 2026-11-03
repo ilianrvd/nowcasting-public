@@ -29,6 +29,22 @@ def coverage_weight(last_dbz: np.ndarray, ramp_px: int = 15) -> np.ndarray:
     return np.clip(dist / float(ramp_px), 0.0, 1.0).astype(np.float32)
 
 
+def advect_weight(layer, w0: np.ndarray, t: dt.datetime, t0: dt.datetime) -> np.ndarray:
+    """
+    Теглото на радара w0 (coverage_weight при t0), преместено с движението на слоя до t.
+    Така всеки облак носи теглото от мястото, откъдето е тръгнал: H40B облак от зоната
+    без радар остава с теглото на сателита и след като влезе в радарната зона (иначе
+    угасваше на 43° N — 03.11.2026, ЮИ → N, север → W); радарна клетка, излязла от
+    покритието, остава радарна. w0 е за часа на радара t0 (не на H40B); при t0 — същото
+    като w0. Извън домейна → 0 (без радар).
+    """
+    k = (t - t0).total_seconds() / 60.0
+    if abs(k) < 0.5:
+        return w0
+    coords = [layer.yy - layer.vy * k, layer.xx - layer.vx * k]
+    return np.clip(map_coordinates(w0, coords, order=1, mode="constant", cval=0.0), 0.0, 1.0)
+
+
 class SatelliteLayer:
     """Последният кадър H40B като Z поле, което се мести по V до всеки целеви момент."""
 
@@ -109,7 +125,8 @@ def fill_nowcast_for_map(forecast: dict, cov_w: np.ndarray, sat_layer) -> None:
     fc = forecast["forecast_dbz"]
     out = np.empty_like(fc)
     for i, t in enumerate(forecast["timestamps"]):
-        out[i] = to_dbz(cov_w * to_z(fc[i]) + (1.0 - cov_w) * sat_layer.z_at(t))
+        w = advect_weight(sat_layer, cov_w, t, comp["timestamp"])   # теглото пътува с облаците
+        out[i] = to_dbz(w * to_z(fc[i]) + (1.0 - w) * sat_layer.z_at(t))
     forecast["forecast_dbz_plot"] = out
     comp["sat_on_map"] = True
 
