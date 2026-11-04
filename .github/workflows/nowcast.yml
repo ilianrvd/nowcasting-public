@@ -32,10 +32,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Огледалото на Ubuntu понякога е много бавно (04.11.2026: два пуска висяха тук по
+      # 20 мин и бяха прекъснати). Пакетите на Python идват с вградени библиотеки
+      # (cartopy, shapely, pyproj, h5py, eccodeslib), затова при проблем продължаваме.
       - name: Install system deps
+        timeout-minutes: 4
+        continue-on-error: true
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y libgeos-dev libproj-dev libhdf5-dev libeccodes-dev
+          sudo apt-get update -qq -o Acquire::Retries=2
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=2 \
+            libgeos-dev libproj-dev libhdf5-dev libeccodes-dev
 
       - name: Setup Python
         uses: actions/setup-python@v5
