@@ -184,9 +184,17 @@ def to_grid_regular(field, src_lat, src_lon, lat, lon, fill=np.nan):
 def ro_listing() -> list[tuple[dt.datetime, str]]:
     txt = _get_text(ROMANIA["base_url"])
     out = []
-    for name in sorted(set(re.findall(r"COMPOSITE_(\d{12})dBZ\.hdf", txt))):
-        out.append((dt.datetime.strptime(name, "%Y%m%d%H%M").replace(tzinfo=UTC),
-                    f"COMPOSITE_{name}dBZ.hdf"))
+    for digits in sorted(set(re.findall(r"COMPOSITE_(\d+)dBZ\.hdf", txt))):
+        fmt = {12: "%Y%m%d%H%M", 14: "%Y%m%d%H%M%S", 10: "%y%m%d%H%M"}.get(len(digits))
+        if fmt is None:
+            continue
+        out.append((dt.datetime.strptime(digits, fmt).replace(tzinfo=UTC),
+                    f"COMPOSITE_{digits}dBZ.hdf"))
+    if out:
+        logger.info(f"  RO листинг: {len(out)} композита, {out[0][0]:%d.%m %H:%M} … {out[-1][0]:%d.%m %H:%M} UTC")
+    else:
+        sample = re.findall(r'COMPOSITE_[^"<>]*', txt)[:3]
+        logger.warning(f"  RO листинг: няма разпознати имена; пример: {sample}")
     return out
 
 
