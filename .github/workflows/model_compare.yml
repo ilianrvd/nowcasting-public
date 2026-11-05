@@ -1,0 +1,74 @@
+name: Model compare (ALADIN vs ICON)
+
+# Успоредно на основния пуск, без да го пипа: веднъж на час сравнява часовия валеж
+# на ALADIN CE и ICON-EU с румънския композит (FSS) — tools/model_compare.py.
+# Резултати: клон model-compare, results/YYYY-MM.csv; обобщение с
+# tools/model_compare_report.py. Точният час не е важен (пропуснат час = една проба
+# по-малко), затова стига вграденият schedule на GitHub — без cron-job.org.
+on:
+  workflow_dispatch:
+    inputs:
+      time:
+        description: "Час за проверка V (UTC, напр. 2026-11-05T14); празно = последният"
+        required: false
+  schedule:
+    - cron: "38 * * * *"
+
+permissions:
+  contents: write        # commit в клона model-compare
+
+concurrency:
+  group: model-compare
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Само каквото трябва на скрипта (без cartopy/pysteps на основния пуск)
+      - name: Пакети
+        run: pip install numpy scipy requests h5py pyproj xarray cfgrib eccodes eccodeslib
+
+      # ALADIN: файлът е за цяла Европа и всички 73 ч — тегли се веднъж на run,
+      # изрязаният часов валеж се пази в кеша между пусканията
+      - name: Кеш
+        uses: actions/cache@v4
+        with:
+          path: data/compare
+          key: compare-${{ github.run_id }}
+          restore-keys: compare-
+
+      - name: Сравнение
+        env:
+          T: ${{ inputs.time }}
+        run: |
+          if [ -n "$T" ]; then python tools/model_compare.py --time "$T"; else python tools/model_compare.py; fi
+
+      - name: Запис в клона model-compare
+        run: |
+          ls out/compare/*.csv >/dev/null 2>&1 || { echo "Няма нови редове (сух час или липсващи данни)"; exit 0; }
+          BR=model-compare
+          REPO="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads origin "$BR" >/dev/null; then
+            git clone --depth 1 --branch "$BR" "$REPO" mc
+          else
+            mkdir mc && cd mc && git init -b "$BR" && git remote add origin "$REPO" && cd ..
+          fi
+          mkdir -p mc/results
+          for f in out/compare/*.csv; do
+            t="mc/results/$(basename "$f")"
+            if [ -f "$t" ]; then tail -n +2 "$f" >> "$t"; else cp "$f" "$t"; fi
+          done
+          cd mc
+          git config user.name  "model-compare bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add results
+          git commit -q -m "compare $(date -u +%Y-%m-%dT%H:%MZ)" || exit 0
+          git push -q origin "$BR"
