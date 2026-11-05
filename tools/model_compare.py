@@ -185,10 +185,9 @@ def ro_listing() -> list[tuple[dt.datetime, str]]:
     txt = _get_text(ROMANIA["base_url"])
     out = []
     for digits in sorted(set(re.findall(r"COMPOSITE_(\d+)dBZ\.hdf", txt))):
-        fmt = {12: "%Y%m%d%H%M", 14: "%Y%m%d%H%M%S", 10: "%y%m%d%H%M"}.get(len(digits))
-        if fmt is None:
+        if len(digits) < 12:                     # имената са YYYYMMDDHHMM + „0000“ (16 цифри)
             continue
-        out.append((dt.datetime.strptime(digits, fmt).replace(tzinfo=UTC),
+        out.append((dt.datetime.strptime(digits[:12], "%Y%m%d%H%M").replace(tzinfo=UTC),
                     f"COMPOSITE_{digits}dBZ.hdf"))
     if out:
         logger.info(f"  RO листинг: {len(out)} композита, {out[0][0]:%d.%m %H:%M} … {out[-1][0]:%d.%m %H:%M} UTC")
