@@ -11,7 +11,7 @@
   модели     — часов валеж за същия прозорец, от run-а, който основният пуск би имал
                в момента на издаване I = V − 30 мин − lead (lead = 60, 90, 120, 150):
                ICON-EU: run на 3 ч, достъпен ~2 ч 40 мин след началото
-               ALADIN:  run на 6 ч, достъпен ~3 ч 30 мин след началото (истинското
+               ALADIN:  run на 6 ч, достъпен ~4 ч 20 мин след началото (истинското
                         закъснение се записва от Last-Modified на файла)
   кандидати  — icon, aladin, aladin_s (ALADIN, загладен с Гаус σ = 7 km — колко помага
                загладането срещу „двойното наказание“ при линейния бленд).
@@ -42,7 +42,7 @@ UTC = dt.timezone.utc
 CFG = {
     "aladin_url": ("https://opendata.chmi.cz/meteorology/weather/nwp_aladin/Lambert_2.3km/"
                    "{run:%H}/ALADLAMB4opendata_{run:%Y%m%d%H}_SURFPREC_TOTAL.grb.bz2"),
-    "aladin_every_h": 6, "aladin_delay": dt.timedelta(hours=3, minutes=30),
+    "aladin_every_h": 6, "aladin_delay": dt.timedelta(hours=4, minutes=30),   # 05.11: run 18 → 22:22
     "icon_every_h": 3,   "icon_delay":   dt.timedelta(hours=2, minutes=40),
     "leads_min": (60, 90, 120, 150),
     "thresholds": (0.5, 2.0, 5.0),               # mm/h
@@ -312,6 +312,8 @@ def aladin_hourly(run: dt.datetime, lat, lon, url_fmt=None) -> dict | None:
         if s == 0:
             continue
         prev = acc.get(s - 1)
+        if prev is None and s == 1:
+            prev = 0.0                           # във файла няма стъпка 0 (акумулацията е 0)
         if prev is None:
             continue
         steps[s] = np.clip(acc[s] - prev, 0.0, None)
