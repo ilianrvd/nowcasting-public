@@ -41,7 +41,7 @@ jobs:
       - name: Кеш
         uses: actions/cache@v4
         with:
-          path: data/compare
+          path: data/compare/aladin      # само изрязаният ALADIN (RO и ICON се теглят наново)
           key: compare-${{ github.run_id }}
           restore-keys: compare-
 

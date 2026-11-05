@@ -53,7 +53,8 @@ CFG = {
     "min_obs_files": 3,                          # от 6 композита в часа
     "mp": (200.0, 1.6),                          # Z = a R^b
     "cache_dir": os.path.join(ROOT, "data", "compare"),
-    "keep_h": 36,
+    "keep_h": 18,                                # нужни са run-ове до ~14 ч назад
+    "aladin_max_step": 16,                       # повече не трябват (закъснение + цикъл + lead)
 }
 # Брегът на Черно море (lat → lon); по-източното е море и не се проверява
 _COAST = ((43.0, 27.95), (43.5, 28.62), (44.0, 28.68), (44.5, 28.78), (44.9, 29.0),
@@ -316,7 +317,8 @@ def aladin_hourly(run: dt.datetime, lat, lon, url_fmt=None) -> dict | None:
             prev = 0.0                           # във файла няма стъпка 0 (акумулацията е 0)
         if prev is None:
             continue
-        steps[s] = np.clip(acc[s] - prev, 0.0, None)
+        if s <= CFG["aladin_max_step"]:
+            steps[s] = np.clip(acc[s] - prev, 0.0, None)
     np.savez_compressed(npz, steps=np.array(sorted(steps)),
                         last_modified=hdr["last_modified"], bytes=hdr["bytes"],
                         **{f"s{s}": v for s, v in steps.items()})
