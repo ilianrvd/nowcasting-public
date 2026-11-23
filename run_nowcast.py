@@ -255,7 +255,8 @@ def main():
                     from config.settings import LIGHTNING_BOOST
                     sat_layer.apply_lightning(li_last, comp["timestamp"],
                                               LIGHTNING_BOOST["sat_signal_mmh"],
-                                              LIGHTNING_BOOST.get("sat_intense_min_mmh"))
+                                              LIGHTNING_BOOST.get("sat_intense_min_mmh"),
+                                              zone=cov_w < 1.0)
         except Exception as e:
             log.warning(f"  H40B: {e}")
     if need_fill:

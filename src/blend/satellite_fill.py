@@ -128,6 +128,7 @@ class SatelliteLayer(PaddedAdvection):
         self.zp = np.where(rain >= min_rate,
                            zr_a * np.maximum(rain, 0.01) ** zr_b, 0.0).astype(np.float32)
         self.time = h40b["time"]
+        self._lat = target_lat
         # V е в пиксели за една стъпка на S-PROG (ts_min) → пиксели за минута
         self._init_motion(V, ts_min, pad)
 
@@ -140,11 +141,17 @@ class SatelliteLayer(PaddedAdvection):
 
     def apply_lightning(self, count: np.ndarray, at_time: dt.datetime,
                         signal_mmh: float, intense_min_mmh: float = None,
-                        zr_a: float = 200.0, zr_b: float = 1.6):
+                        zr_a: float = 200.0, zr_b: float = 1.6, zone: np.ndarray = None):
         """
         Мести H40B до at_time (часа на радара), усилва там с мълниите от същия
         прозорец (същото правило като за радара) и оттук нататък слоят се движи
         от at_time с вече усиленото поле.
+
+        Мълнии без H40B (от 23.11.2026): група мълнии (≥ sat_orphan_min_px), около
+        която в sat_orphan_km няма H40B ≥ signal_mmh, е нова клетка, която H40B още
+        не вижда (закъснение 20–37 мин) → ново ядро 45 / 55 dBZ на мястото на
+        мълниите, както в резерва ICON+LI. Иначе картата показва само мълнии и
+        прогнозата няма какво да мести. zone: True = без радар (None = навсякъде).
         """
         from src.nowcast.lightning_boost import boost_dbz, _breakdown
         zp = self.zp_at(at_time)                       # цялата решетка до часа на радара
@@ -156,12 +163,47 @@ class SatelliteLayer(PaddedAdvection):
         int_dbz = to_dbz(intense_min_mmh) if intense_min_mmh else None
         brk = _breakdown(dbz, count, signal_dbz, nan_label="без валеж в H40B")
         dbz, n1, n2 = boost_dbz(dbz, count, signal_dbz, int_dbz)
+        dbz, n_new, px_new = self._orphan_cores(dbz, count, signal_dbz, zone)
         z0[...] = np.where(np.isfinite(dbz), 10.0 ** (dbz / 10.0), 0.0)   # мълниите — само в домейна
         self.zp = zp.astype(np.float32)
         logger.info(f"Сателит H40B: преместен {self.time:%H:%M}→{at_time:%H:%M} UTC и усилен "
                     f"с мълнии (сигнал ≥{signal_mmh} mm/h = {signal_dbz:.0f} dBZ) — "
                     f"до 45 dBZ: {n1} px, до 55 dBZ: {n2} px  [{brk}]")
+        if n_new:
+            logger.info(f"Сателит H40B: мълнии без H40B валеж — {n_new} нови ядра ({px_new} px)")
         self.time = at_time
+
+    def _orphan_cores(self, dbz: np.ndarray, count: np.ndarray, signal_dbz: float,
+                      zone: np.ndarray = None):
+        """Ново ядро там, където има група мълнии, а H40B е сух в sat_orphan_km."""
+        from scipy.ndimage import label
+        from config.settings import LIGHTNING_BOOST as CFG
+        km = CFG.get("sat_orphan_km", 0)
+        if not km:
+            return dbz, 0, 0
+        ltg = count >= 1
+        if zone is not None:
+            ltg &= zone
+        if not ltg.any():
+            return dbz, 0, 0
+        lab, n = label(ltg)
+        sig = np.nan_to_num(dbz, nan=-99.0) >= signal_dbz
+        km_px = abs(float(self._lat[1] - self._lat[0])) * 111.0
+        dist_sig = distance_transform_edt(~sig) * km_px if sig.any() else np.full(sig.shape, np.inf)
+        size = np.bincount(lab.ravel())
+        mind = np.full(n + 1, np.inf)
+        np.minimum.at(mind, lab.ravel(), dist_sig.ravel())
+        orphan = (size >= CFG.get("sat_orphan_min_px", 3)) & (mind > km)
+        orphan[0] = False
+        mask = orphan[lab]
+        if not mask.any():
+            return dbz, 0, 0
+        out = np.nan_to_num(dbz, nan=-99.0)
+        out[mask] = np.maximum(out[mask], CFG["single_dbz"])
+        hot = mask & (count >= CFG["intense_count"])
+        out[hot] = np.maximum(out[hot], CFG["intense_dbz"])
+        out = np.where(out > -99, out, np.nan).astype(np.float32)
+        return out, int(orphan.sum()), int(mask.sum())
 
 
 
