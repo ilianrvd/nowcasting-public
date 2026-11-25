@@ -329,13 +329,20 @@ def main():
 
     # Публичната страница (docs/embed/): кадри за Leaflet + таблица за стартовете
     metars = None
+    metar_records = None
     try:                                    # METAR за летищата (точките на страницата)
         from config.settings import METAR_SITES, AIRPORTS_EXPORT
+        from src.ingest.metar import fetch_awc, latest_per_airport
+        metar_records = fetch_awc(list(AIRPORTS_EXPORT["airports"]))
         if METAR_SITES.get("enabled", True):
-            from src.ingest.metar import fetch_metars
-            metars = fetch_metars(list(AIRPORTS_EXPORT["airports"]))
+            metars = latest_per_airport(metar_records)
     except Exception as e:
         log.warning(f"  METAR: {e} — летищата само по радар/сателит")
+    try:                                    # obs/metar_latest.json за fogNowcast; грешка тук не спира пуска
+        from src.output.obs_export import export_metar
+        export_metar(metar_records)
+    except Exception as e:
+        log.warning(f"  METAR (obs/metar_latest.json): {e}")
     try:
         from src.output.web_export import export_web
         idat = icon_data or {}
