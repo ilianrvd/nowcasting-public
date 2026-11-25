@@ -65,7 +65,10 @@ jobs:
           key: h40b-${{ github.run_id }}
           restore-keys: h40b-
 
+      # Нормално ~1–1.5 мин. При бавен външен източник по-добре да спрем рано,
+      # отколкото да заемем целия job (20 мин) и да блокираме следващите пускове.
       - name: Run nowcasting
+        timeout-minutes: 8
         run: |
           python run_nowcast.py
 

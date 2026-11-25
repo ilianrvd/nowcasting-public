@@ -17,7 +17,7 @@ Runs на всеки 3 ч (00..21 UTC), почасови стъпки до +48 �
   valid_times — краят на всеки часов прозорец
 """
 
-import os, sys, re, bz2, math, shutil, logging
+import os, sys, re, bz2, math, shutil, time, logging
 import datetime as dt
 import numpy as np
 import requests
@@ -31,6 +31,31 @@ FIELDS = ("tot_prec", "rain_con", "snow_con", "lpi_con_max")
 FORECAST_HOURS = 6
 MARGIN_DEG = 2.0          # поле около домейна при изрязване (≥ невидимия ръб: 150 km ≈ 1.4° lat, 1.85° lon)
 _session = requests.Session()
+
+# requests.timeout е за всяко отделно четене, не за целия файл: при бавен сървър
+# (25.11.2026: ICON от DWD отне 17 мин вместо 25 сек и пускът изтече по таймаут на job-а)
+# сваляне, което "капе", никога не изтича. Затова ограничаваме общото време.
+FILE_TIMEOUT_S = 40        # максимум за един файл
+PHASE_BUDGET_S = 150       # максимум за цялата ICON фаза
+_deadline = [None]
+
+
+def _download(url: str) -> bytes:
+    t0 = time.monotonic()
+    limit = FILE_TIMEOUT_S
+    if _deadline[0] is not None:
+        limit = min(limit, _deadline[0] - t0)
+    if limit <= 0:
+        raise TimeoutError("ICON: изчерпан е времевият бюджет на фазата")
+    r = _session.get(url, timeout=(10, 20), stream=True)
+    r.raise_for_status()
+    chunks = []
+    for chunk in r.iter_content(65536):
+        chunks.append(chunk)
+        if time.monotonic() - t0 > limit:
+            r.close()
+            raise TimeoutError(f"ICON: {url.rsplit('/', 1)[-1]} се тегли твърде бавно (>{limit:.0f} с)")
+    return b"".join(chunks)
 
 
 def _fname(run: dt.datetime, step: int, field: str) -> str:
@@ -100,10 +125,9 @@ def _load(run, step, field, url, cache_dir):
     fname = _fname(run, step, field)
     path = os.path.join(cache_dir, fname[:-4])        # без .bz2
     if not os.path.exists(path):
-        r = _session.get(url + fname, timeout=60)
-        r.raise_for_status()
+        raw = _download(url + fname)
         with open(path, "wb") as f:
-            f.write(bz2.decompress(r.content))
+            f.write(bz2.decompress(raw))
     return _read_grib(path)
 
 
@@ -132,10 +156,9 @@ def _fetch_wind700(run: dt.datetime, t_valid: dt.datetime, cache_dir: str, crop)
         path = os.path.join(cache_dir, fname[:-4])
         if not os.path.exists(path):
             url = f"{ICON_DWD['base_url']}/{run.hour:02d}/{comp}/{fname}"
-            r = _session.get(url, timeout=60)
-            r.raise_for_status()
+            raw = _download(url)
             with open(path, "wb") as f:
-                f.write(bz2.decompress(r.content))
+                f.write(bz2.decompress(raw))
         lat, lon, data = _read_grib(path)
         out[comp] = np.nan_to_num(crop(lat, lon, data))
     return {"u": out["u"], "v": out["v"], "time": run + dt.timedelta(hours=step)}
@@ -144,10 +167,9 @@ def _fetch_wind700(run: dt.datetime, t_valid: dt.datetime, cache_dir: str, crop)
 def _get_grib(url_dir: str, fname: str, cache_dir: str, crop):
     path = os.path.join(cache_dir, fname[:-4])
     if not os.path.exists(path):
-        r = _session.get(url_dir + fname, timeout=60)
-        r.raise_for_status()
+        raw = _download(url_dir + fname)
         with open(path, "wb") as f:
-            f.write(bz2.decompress(r.content))
+            f.write(bz2.decompress(raw))
     lat, lon, data = _read_grib(path)
     return np.nan_to_num(crop(lat, lon, data))
 
@@ -183,6 +205,7 @@ def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict 
     if now is None:
         now = dt.datetime.now(dt.timezone.utc)
 
+    _deadline[0] = time.monotonic() + PHASE_BUDGET_S
     found = _find_run(now)
     if found is None:
         logger.error("ICON DWD: няма пълен run в последните 12 ч")
