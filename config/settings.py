@@ -8,6 +8,9 @@ EUMETSAT MTG LI (мълнии) и H SAF H40B (валеж), DWD ICON-EU.
 
 import os
 
+# Общ User-Agent за заявките към външни източници с правила за ползване (AWC, Ogimet)
+USER_AGENT = "nowcasting-public/0.1 (+https://github.com/ilianrvd/nowcasting-public; ilianm@mail.bg)"
+
 # ============================================================
 # ДОМЕЙН
 # ============================================================
