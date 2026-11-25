@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-11-25T18:00:00Z",
+  "source": "nowcasting-public docs/static/points.json; airports: AIP Bulgaria (coordinates and elevation, checked 2026-11-25)",
+  "version": 1,
+  "points": [
+    {"id": "LBSF", "type": "airport", "name": "София", "name_en": "Sofia", "lat": 42.696667, "lon": 23.411389, "elev_m": 531, "active": true},
+    {"id": "LBBG", "type": "airport", "name": "Бургас", "name_en": "Burgas", "lat": 42.569722, "lon": 27.515278, "elev_m": 41, "active": true},
+    {"id": "LBWN", "type": "airport", "name": "Варна", "name_en": "Varna", "lat": 43.232222, "lon": 27.825, "elev_m": 70, "active": true},
+    {"id": "LBPD", "type": "airport", "name": "Пловдив", "name_en": "Plovdiv", "lat": 42.067778, "lon": 24.850833, "elev_m": 182, "active": true},
+    {"id": "LBGO", "type": "airport", "name": "Горна Оряховица", "name_en": "Gorna Oryahovitsa", "lat": 43.151389, "lon": 25.712778, "elev_m": 87, "active": true}
+  ]
+}
