@@ -343,6 +343,11 @@ def main():
         export_metar(metar_records)
     except Exception as e:
         log.warning(f"  METAR (obs/metar_latest.json): {e}")
+    try:                                    # obs/synop_latest.json (Ogimet, ≈1 заявка на час); грешка не спира пуска
+        from src.output.obs_export import export_synop
+        export_synop()
+    except Exception as e:
+        log.warning(f"  SYNOP (obs/synop_latest.json): {e}")
     try:
         from src.output.web_export import export_web
         idat = icon_data or {}

@@ -1,12 +1,97 @@
 {
-  "generated_at": "2026-11-25T18:00:00Z",
-  "source": "nowcasting-public docs/static/points.json; airports: AIP Bulgaria (coordinates and elevation, checked 2026-11-25)",
-  "version": 1,
-  "points": [
-    {"id": "LBSF", "type": "airport", "name": "София", "name_en": "Sofia", "lat": 42.696667, "lon": 23.411389, "elev_m": 531, "active": true},
-    {"id": "LBBG", "type": "airport", "name": "Бургас", "name_en": "Burgas", "lat": 42.569722, "lon": 27.515278, "elev_m": 41, "active": true},
-    {"id": "LBWN", "type": "airport", "name": "Варна", "name_en": "Varna", "lat": 43.232222, "lon": 27.825, "elev_m": 70, "active": true},
-    {"id": "LBPD", "type": "airport", "name": "Пловдив", "name_en": "Plovdiv", "lat": 42.067778, "lon": 24.850833, "elev_m": 182, "active": true},
-    {"id": "LBGO", "type": "airport", "name": "Горна Оряховица", "name_en": "Gorna Oryahovitsa", "lat": 43.151389, "lon": 25.712778, "elev_m": 87, "active": true}
-  ]
+ "generated_at": "2026-11-25T19:00:00Z",
+ "source": "nowcasting-public docs/static/points.json; airports: AIP Bulgaria (coordinates and elevation, checked 2026-11-25); synop stations: JICA Annex B.1 (NIMH list) / infoclimat — to be verified",
+ "version": 2,
+ "points": [
+  {
+   "id": "LBSF",
+   "type": "airport",
+   "name": "София",
+   "name_en": "Sofia",
+   "lat": 42.696667,
+   "lon": 23.411389,
+   "elev_m": 531,
+   "active": true
+  },
+  {
+   "id": "LBBG",
+   "type": "airport",
+   "name": "Бургас",
+   "name_en": "Burgas",
+   "lat": 42.569722,
+   "lon": 27.515278,
+   "elev_m": 41,
+   "active": true
+  },
+  {
+   "id": "LBWN",
+   "type": "airport",
+   "name": "Варна",
+   "name_en": "Varna",
+   "lat": 43.232222,
+   "lon": 27.825,
+   "elev_m": 70,
+   "active": true
+  },
+  {
+   "id": "LBPD",
+   "type": "airport",
+   "name": "Пловдив",
+   "name_en": "Plovdiv",
+   "lat": 42.067778,
+   "lon": 24.850833,
+   "elev_m": 182,
+   "active": true
+  },
+  {
+   "id": "LBGO",
+   "type": "airport",
+   "name": "Горна Оряховица",
+   "name_en": "Gorna Oryahovitsa",
+   "lat": 43.151389,
+   "lon": 25.712778,
+   "elev_m": 87,
+   "active": true
+  },
+  {
+   "id": "SYNOP:15614",
+   "type": "synop",
+   "name": "София",
+   "name_en": "Sofia TSMS",
+   "lat": 42.65,
+   "lon": 23.3833,
+   "elev_m": 586,
+   "active": true
+  },
+  {
+   "id": "SYNOP:15655",
+   "type": "synop",
+   "name": "Бургас",
+   "name_en": "Burgas",
+   "lat": 42.48,
+   "lon": 27.48,
+   "elev_m": 16,
+   "active": true
+  },
+  {
+   "id": "SYNOP:15552",
+   "type": "synop",
+   "name": "Варна",
+   "name_en": "Varna",
+   "lat": 43.2125,
+   "lon": 27.9524,
+   "elev_m": 39,
+   "active": true
+  },
+  {
+   "id": "SYNOP:15626",
+   "type": "synop",
+   "name": "Пловдив-Тракия",
+   "name_en": "Plovdiv Trakiya",
+   "lat": 42.0667,
+   "lon": 24.85,
+   "elev_m": 154,
+   "active": true
+  }
+ ]
 }

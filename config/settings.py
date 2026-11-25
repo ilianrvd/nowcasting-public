@@ -11,6 +11,16 @@ import os
 # Общ User-Agent за заявките към външни източници с правила за ползване (AWC, Ogimet)
 USER_AGENT = "nowcasting-public/0.1 (+https://github.com/ilianrvd/nowcasting-public; ilianm@mail.bg)"
 
+# SYNOP (Ogimet getsynop, блок 15) — станциите, които се публикуват в obs/synop_latest.json.
+# lat/lon/elev: JICA Annex B.1 (списък на НИМХ) за 15614/15552/15626 и infoclimat за 15655 —
+# да се сверят с НИМХ/WMO OSCAR. LBGO: станция наблизо още не е избрана.
+SYNOP_STATIONS = {
+    "15614": {"name": "София", "name_en": "Sofia TSMS", "lat": 42.65, "lon": 23.3833, "elev_m": 586, "airport": "LBSF"},
+    "15655": {"name": "Бургас", "name_en": "Burgas", "lat": 42.48, "lon": 27.48, "elev_m": 16, "airport": "LBBG"},
+    "15552": {"name": "Варна", "name_en": "Varna", "lat": 43.2125, "lon": 27.9524, "elev_m": 39, "airport": "LBWN"},
+    "15626": {"name": "Пловдив-Тракия", "name_en": "Plovdiv Trakiya", "lat": 42.0667, "lon": 24.85, "elev_m": 154, "airport": "LBPD"},
+}
+
 # ============================================================
 # ДОМЕЙН
 # ============================================================
