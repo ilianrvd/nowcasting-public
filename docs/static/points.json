@@ -1,7 +1,7 @@
 {
- "generated_at": "2026-11-25T19:00:00Z",
- "source": "nowcasting-public docs/static/points.json; airports: AIP Bulgaria (coordinates and elevation, checked 2026-11-25); synop stations: JICA Annex B.1 (NIMH list) / infoclimat — to be verified",
- "version": 2,
+ "generated_at": "2026-11-25T19:15:00Z",
+ "source": "nowcasting-public docs/static/points.json; airports: AIP Bulgaria (coordinates and elevation, checked 2026-11-25); synop stations: WMO station list, checked by the owner 2026-11-25",
+ "version": 3,
  "points": [
   {
    "id": "LBSF",
@@ -84,14 +84,25 @@
    "active": true
   },
   {
-   "id": "SYNOP:15626",
+   "id": "SYNOP:15625",
    "type": "synop",
-   "name": "Пловдив-Тракия",
-   "name_en": "Plovdiv Trakiya",
-   "lat": 42.0667,
-   "lon": 24.85,
-   "elev_m": 154,
+   "name": "Пловдив",
+   "name_en": "Plovdiv",
+   "lat": 42.133,
+   "lon": 24.75,
+   "elev_m": 185,
    "active": true
+  },
+  {
+   "id": "SYNOP:15530",
+   "type": "synop",
+   "name": "Велико Търново",
+   "name_en": "Veliko Tarnovo",
+   "lat": 43.083,
+   "lon": 25.65,
+   "elev_m": 218,
+   "active": true,
+   "note": "за LBGO: на ~9 km от летището, на 218 m (летището е на 87 m)"
   }
  ]
 }

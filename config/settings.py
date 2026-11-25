@@ -12,13 +12,14 @@ import os
 USER_AGENT = "nowcasting-public/0.1 (+https://github.com/ilianrvd/nowcasting-public; ilianm@mail.bg)"
 
 # SYNOP (Ogimet getsynop, блок 15) — станциите, които се публикуват в obs/synop_latest.json.
-# lat/lon/elev: JICA Annex B.1 (списък на НИМХ) за 15614/15552/15626 и infoclimat за 15655 —
-# да се сверят с НИМХ/WMO OSCAR. LBGO: станция наблизо още не е избрана.
+# Номера, координати и височини са сверени от Илиан със списъка на WMO станциите (2026-11-25).
+# 15530 (Велико Търново) е за LBGO: на ~9 km от летището и на 218 m при 87 m на летището.
 SYNOP_STATIONS = {
     "15614": {"name": "София", "name_en": "Sofia TSMS", "lat": 42.65, "lon": 23.3833, "elev_m": 586, "airport": "LBSF"},
     "15655": {"name": "Бургас", "name_en": "Burgas", "lat": 42.48, "lon": 27.48, "elev_m": 16, "airport": "LBBG"},
     "15552": {"name": "Варна", "name_en": "Varna", "lat": 43.2125, "lon": 27.9524, "elev_m": 39, "airport": "LBWN"},
-    "15626": {"name": "Пловдив-Тракия", "name_en": "Plovdiv Trakiya", "lat": 42.0667, "lon": 24.85, "elev_m": 154, "airport": "LBPD"},
+    "15625": {"name": "Пловдив", "name_en": "Plovdiv", "lat": 42.133, "lon": 24.750, "elev_m": 185, "airport": "LBPD"},
+    "15530": {"name": "Велико Търново", "name_en": "Veliko Tarnovo", "lat": 43.083, "lon": 25.650, "elev_m": 218, "airport": "LBGO"},
 }
 
 # ============================================================
