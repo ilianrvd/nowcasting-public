@@ -10,6 +10,7 @@ data/output/
 docs/maps/*.png
 docs/maps/meta.json
 docs/embed/data/
+docs/obs/
 data/cache/
 
 # Сравнение ALADIN ↔ ICON (tools/model_compare.py) — резултатите са в клона model-compare
