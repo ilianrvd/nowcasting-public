@@ -1,0 +1,23 @@
+# Еднократна проверка: приема ли Ogimet заявки от GitHub Actions? Една заявка, нищо не се публикува.
+name: Ogimet probe
+on:
+  push:
+    branches: [ogimet-probe]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: One getsynop request (Bulgaria block, last 6 h)
+        run: |
+          B=$(date -u -d '-6 hours' +%Y%m%d%H00)
+          E=$(date -u +%Y%m%d%H%M)
+          echo "begin=$B end=$E"
+          curl -sS --max-time 90 -o out.csv -w "HTTP %{http_code}, %{size_download} bytes, %{time_total}s\n" \
+            -A "nowcasting-public/0.1 (+https://github.com/ilianrvd/nowcasting-public; ilianm@mail.bg)" \
+            "https://www.ogimet.com/cgi-bin/getsynop?block=15&begin=$B&end=$E" || echo "CURL FAILED $?"
+          echo "lines: $(wc -l < out.csv 2>/dev/null)"
+          echo "--- stations (id,count) ---"
+          cut -d, -f1 out.csv | sort | uniq -c | sort -k2 | head -80
+          echo "--- sample ---"
+          head -c 1500 out.csv
