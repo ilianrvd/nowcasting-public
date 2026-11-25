@@ -3,7 +3,6 @@ Ingest: Румъния национален COMPOSITE (ODIM HDF5)
 =================================================
 Сваля и чете COMPOSITE файлове от meteoromania.ro/radar/
 Формат: ODIM HDF5, CAPPI, AEQD проекция.
-Адаптирано от nowcasting системата на ДП РВД.
 """
 
 import os, sys, logging, re
