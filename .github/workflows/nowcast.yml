@@ -65,10 +65,10 @@ jobs:
           key: h40b-${{ github.run_id }}
           restore-keys: h40b-
 
-      # Нормално ~1–1.5 мин. При бавен външен източник по-добре да спрем рано,
+      # Нормално 1–3.5 мин (при бавен ICON до ~6, а при резерва Open-Meteo до ~9). При бавен източник по-добре да спрем,
       # отколкото да заемем целия job (20 мин) и да блокираме следващите пускове.
       - name: Run nowcasting
-        timeout-minutes: 8
+        timeout-minutes: 15
         run: |
           python run_nowcast.py
 
