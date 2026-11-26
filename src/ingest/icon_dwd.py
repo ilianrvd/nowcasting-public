@@ -286,7 +286,7 @@ def fetch_icon_dwd(now: dt.datetime = None, t_wind: dt.datetime = None) -> dict 
     winds = None
     try:
         winds = _fetch_site_winds(run, s0, s1, cache_dir, crop)
-        if winds.get("u10") is not None:
+        if winds.get("u10") is not None and winds.get("v10") is not None:
             sp = np.hypot(winds["u10"], winds["v10"]) * 3.6
             g = winds["gust"] * 3.6 if winds.get("gust") is not None else None
             logger.info(f"  Вятър 10 m: {len(winds['times'])} часа, средно {sp.mean():.0f} km/h, "

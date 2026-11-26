@@ -147,10 +147,16 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
     nt = 0
     lon_offset = 0
     ok_chunks = 0
+    t_start, fails = time_mod.monotonic(), 0
+    BUDGET_S, MAX_FAILS = 270, 2   # при ограничен/бавен Open-Meteo не държим пуска с минути
 
     for chunk_idx, lon_chunk in enumerate(lon_chunks):
         if chunk_idx > 0:
             time_mod.sleep(35)   # < 600 calls/минута
+        if fails >= MAX_FAILS or time_mod.monotonic() - t_start > BUDGET_S:
+            logger.error(f"  Open-Meteo: спирам след {chunk_idx} от {len(lon_chunks)} части "
+                         f"({fails} грешки, {time_mod.monotonic() - t_start:.0f} с) — без ICON")
+            return None
 
         lat_pairs, lon_pairs = [], []
         for la in lats:
@@ -175,13 +181,15 @@ def fetch_icon_grid(ref_time: dt.datetime = None,
         try:
             req = urllib.request.Request(url)
             req.add_header("User-Agent", "nowcasting-public/1.0")
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode())
         except Exception as e:
             logger.error(f"  Chunk {chunk_idx+1} грешка: {e}")
             lon_offset += len(lon_chunk)
+            fails += 1
             continue
 
+        fails = 0
         results = data if isinstance(data, list) else [data]
 
         if all_times is None:
